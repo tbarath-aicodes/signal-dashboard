@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="80" fill="#1d4ed8"/>
+  <rect x="60" y="320" width="60" height="132" rx="8" fill="#60a5fa"/>
+  <rect x="160" y="240" width="60" height="212" rx="8" fill="#93c5fd"/>
+  <rect x="260" y="180" width="60" height="272" rx="8" fill="#bfdbfe"/>
+  <rect x="360" y="100" width="60" height="352" rx="8" fill="#fff"/>
+  <polyline points="80,290 180,210 280,150 380,70" fill="none" stroke="#22c55e" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="380" cy="70" r="18" fill="#22c55e"/>
+  <text x="256" y="490" font-family="monospace" font-size="52" font-weight="bold" fill="rgba(255,255,255,0.5)" text-anchor="middle">SIGNALS</text>
+</svg>

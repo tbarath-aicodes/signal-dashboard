@@ -1,0 +1,42 @@
+{
+  "name": "Signal Dashboard",
+  "short_name": "Signals",
+  "description": "Real-time stock signal dashboard with AI options analysis",
+  "start_url": "./signal-dashboard-v1.1.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f0f2f5",
+  "theme_color": "#1d4ed8",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": [
+    "finance",
+    "productivity"
+  ],
+  "shortcuts": [
+    {
+      "name": "Top Picks",
+      "short_name": "Picks",
+      "description": "View AI trade recommendations",
+      "url": "./signal-dashboard-v1.1.html#top-recs"
+    },
+    {
+      "name": "Chat",
+      "short_name": "Chat",
+      "description": "Ask about your watchlist",
+      "url": "./signal-dashboard-v1.1.html#chat"
+    }
+  ]
+}
