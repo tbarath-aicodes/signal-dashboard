@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"/>
+<meta name="theme-color" content="#1d4ed8"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="Signals"/>
+<meta name="description" content="Real-time stock signal dashboard with AI options analysis"/>
+<link rel="manifest" href="manifest.json"/>
+<link rel="apple-touch-icon" href="icon.svg"/>
+<title>Signal Dashboard V2.2</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  html{height:100%;overflow-x:hidden;}
+  body{
+    background:#f0f2f5;color:#1a1d23;font-family:'Inter',system-ui,sans-serif;
+    padding:env(safe-area-inset-top,20px) 16px env(safe-area-inset-bottom,80px);
+    min-height:100vh;min-height:100dvh;overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+  input,button,textarea{font-family:inherit;-webkit-appearance:none;appearance:none;}
+  input:focus,textarea:focus{outline:none;border-color:#1565c0!important;}
+  button{cursor:pointer;}
+  button:active{transform:scale(.97);transition:transform .1s;}
+  button:hover{opacity:.85;}
+  .spinner{width:14px;height:14px;border:2px solid #cbd5e1;border-top-color:#1565c0;border-radius:50%;animation:spin 0.8s linear infinite;display:inline-block;vertical-align:middle;flex-shrink:0;}
+  .live-dot{width:6px;height:6px;border-radius:50%;background:#16a34a;box-shadow:0 0 5px #16a34a;animation:pulse 1.5s ease-in-out infinite;display:inline-block;}
+  .sec-hdr{font-size:11px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;padding:6px 0 10px;display:flex;align-items:center;gap:8px;}
+  .sec-hdr::after{content:'';flex:1;height:1px;background:#e2e8f0;}
+  .val-chips{display:flex;gap:5px;flex-wrap:wrap;margin:5px 0 6px;}
+  .val-chip{display:flex;flex-direction:column;align-items:center;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:3px 7px;min-width:52px;}
+  .val-chip-label{font-size:8px;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:1px;}
+  .val-chip-value{font-size:11px;font-weight:800;font-family:monospace;}
+  .val-cheap{color:#15803d;} .val-fair{color:#854d0e;} .val-rich{color:#dc2626;} .val-na{color:#94a3b8;}
+  .val-verdict-badge{display:inline-block;font-size:9px;font-weight:700;padding:2px 8px;border-radius:8px;margin-bottom:6px;}
+  .val-verdict-cheap{background:#dcfce7;border:1px solid #16a34a44;color:#15803d;}
+  .val-verdict-fair{background:#fefce8;border:1px solid #ca8a0444;color:#854d0e;}
+  .val-verdict-rich{background:#fef2f2;border:1px solid #ef444444;color:#b91c1c;}
+  .val-verdict-unknown{background:#f8fafc;border:1px solid #e2e8f0;color:#94a3b8;}
+  #mobile-nav{display:none;}
+  @media(max-width:640px){
+    body{padding:12px 12px 90px;font-size:14px;}
+    #mobile-nav{display:flex;position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid #e2e8f0;padding:8px 0 env(safe-area-inset-bottom,8px);z-index:1000;box-shadow:0 -2px 12px rgba(0,0,0,.08);}
+    .nav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 0;background:none;border:none;color:#94a3b8;font-size:9px;font-weight:600;letter-spacing:.03em;}
+    .nav-btn.active{color:#1d4ed8;}
+    .nav-btn .nav-icon{font-size:20px;}
+    .page-section{display:none;}
+    .page-section.active{display:block;}
+  }
+  @media(min-width:641px){.page-section{display:block!important;}}
+</style>
+</head>
+<body>
+<div id="app" style="max-width:1280px;margin:0 auto;"></div>
+<script>
+// ── Sectors ───────────────────────────────────────────────────────────────────
+const SECTORS = [
+  {name:"🔷 Semiconductors",        color:"#1d4ed8", desc:"Chip design & manufacturing",          tickers:["NVDA","AVGO","TSM"]},
+  {name:"☁️ AI Infrastructure",      color:"#7c3aed", desc:"GPU clouds, data centers, networking", tickers:["CRWV","NBIS","CLS","VRT","ANET"]},
+  {name:"🤖 AI & Enterprise SaaS",   color:"#0369a1", desc:"AI software, CRM, observability",      tickers:["CRM","NOW","DDOG","MNDY","TEM"]},
+  {name:"🛡️ Cybersecurity",          color:"#dc2626", desc:"Network & cloud security",             tickers:["PANW"]},
+  {name:"🌐 Big Tech & E-Commerce",  color:"#0891b2", desc:"Mega-cap platforms & cloud",           tickers:["META","AMZN"]},
+  {name:"💊 Digital Health",         color:"#059669", desc:"Telehealth & AI diagnostics",          tickers:["HIMS","TEM"]},
+  {name:"⚛️ Quantum Computing",      color:"#9333ea", desc:"Quantum hardware & software",          tickers:["RGTI"]},
+  {name:"🚀 Space & Defense",        color:"#be185d", desc:"Orbital launch & space tech",          tickers:["SPCX"]},
+  {name:"💰 Fintech",                color:"#ca8a04", desc:"Digital banking & investing",          tickers:["SOFI","HOOD"]},
+  {name:"🏨 Travel & Hospitality",   color:"#ea580c", desc:"Online travel platforms",              tickers:["ABNB"]},
+  {name:"💾 Storage & Networking",   color:"#475569", desc:"Enterprise data & storage",            tickers:["NTAP"]},
+  {name:"⚡ Nuclear Energy",         color:"#16a34a", desc:"Small modular reactor plays",          tickers:["OKLO","BMNR"]},
+];
+const seen=new Set();
+const CLEAN=SECTORS.map(s=>({...s,tickers:s.tickers.filter(t=>{if(seen.has(t))return false;seen.add(t);return true;})})).filter(s=>s.tickers.length);
+const ALL_SYMS=[...seen];
+
+const SEED={
+  NVDA:{price:210.69,change:6.04,changePct:2.95,high:211.39,low:206.50,prevClose:204.65,volume:241272013},
+  AVGO:{price:411.35,change:18.45,changePct:4.70,high:412.70,low:405.38,prevClose:392.90,volume:45076052},
+  TSM:{price:462.12,change:29.97,changePct:6.94,high:465.22,low:438.39,prevClose:432.15,volume:25817106},
+  CRWV:{price:117.61,change:2.40,changePct:2.08,high:119.89,low:114.13,prevClose:115.21,volume:65550000},
+  NBIS:{price:286.69,change:5.78,changePct:2.06,high:298.80,low:275.58,prevClose:280.91,volume:36625522},
+  CLS:{price:95.40,change:1.80,changePct:1.93,high:96.50,low:93.80,prevClose:93.60,volume:4200000},
+  VRT:{price:256.10,change:5.20,changePct:2.07,high:258.50,low:252.30,prevClose:250.90,volume:8300000},
+  ANET:{price:112.40,change:6.10,changePct:5.74,high:114.20,low:109.80,prevClose:106.30,volume:6100000},
+  CRM:{price:151.78,change:-3.24,changePct:-2.09,high:154.47,low:149.80,prevClose:155.02,volume:57940830},
+  NOW:{price:95.04,change:-0.44,changePct:-0.46,high:96.24,low:92.45,prevClose:95.48,volume:36337231},
+  DDOG:{price:226.63,change:4.80,changePct:2.16,high:228.50,low:222.10,prevClose:221.83,volume:5200000},
+  MNDY:{price:312.40,change:4.10,changePct:1.33,high:314.50,low:308.20,prevClose:308.30,volume:1200000},
+  TEM:{price:68.20,change:1.40,changePct:2.09,high:69.10,low:66.80,prevClose:66.80,volume:9400000},
+  PANW:{price:281.60,change:3.20,changePct:1.15,high:281.60,low:280.25,prevClose:278.40,volume:7340000},
+  META:{price:577.22,change:9.64,changePct:1.70,high:580.22,low:563.10,prevClose:567.58,volume:28824630},
+  AMZN:{price:244.39,change:6.89,changePct:2.90,high:245.73,low:236.02,prevClose:237.50,volume:75624415},
+  HIMS:{price:29.40,change:0.70,changePct:2.44,high:29.80,low:28.60,prevClose:28.70,volume:18000000},
+  RGTI:{price:20.86,change:0.62,changePct:3.06,high:20.97,low:19.53,prevClose:20.25,volume:52000000},
+  SPCX:{price:37.20,change:1.20,changePct:3.33,high:37.80,low:36.10,prevClose:36.00,volume:8200000},
+  SOFI:{price:18.40,change:0.30,changePct:1.66,high:18.70,low:18.10,prevClose:18.10,volume:42000000},
+  HOOD:{price:105.51,change:8.81,changePct:9.11,high:110.70,low:95.88,prevClose:96.71,volume:69944989},
+  ABNB:{price:138.20,change:1.80,changePct:1.32,high:139.20,low:136.50,prevClose:136.40,volume:6800000},
+  NTAP:{price:122.40,change:0.90,changePct:0.74,high:123.10,low:121.50,prevClose:121.50,volume:2800000},
+  OKLO:{price:59.00,change:1.55,changePct:2.70,high:61.68,low:56.97,prevClose:57.45,volume:4190000},
+  BMNR:{price:8.40,change:0.28,changePct:3.45,high:8.60,low:8.10,prevClose:8.12,volume:3200000},
+};
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const DATA_URL='https://data.alpaca.markets';
+const STREAM_URL='wss://stream.data.alpaca.markets/v2/iex';
+const ANTHROPIC='https://api.anthropic.com/v1/messages';
+let KEY_ID='',SECRET='',ANTHROPIC_KEY='';
+let ws=null,autoInterval=null,streamingSymbols=[],keyPanelOpen=true,aiPanelOpen=false;
+function toggleAnthropicPanel(){aiPanelOpen=!aiPanelOpen;render();}
+const CLOSES={};
+
+let TICKERS=ALL_SYMS.map(sym=>({
+  symbol:sym,
+  data:SEED[sym]?{...SEED[sym],tag:'NEUTRAL',score:0,rsi:null,macd:null,macdSig:null,sma20:null,sma50:null,reasons:['Connect Alpaca to load live signals'],closes:[]}:null,
+  loading:false,error:null,ai:null,aiLoading:false,
+  pe:null,forwardPe:null,industryPe:null,valVerdict:'unknown'
+}));
+
+const SIG={
+  STRONG_BUY:{bg:'#dcfce7',border:'#16a34a',text:'#15803d',label:'STRONG BUY'},
+  BUY:{bg:'#f0fdf4',border:'#4ade80',text:'#166534',label:'BUY'},
+  NEUTRAL:{bg:'#f8fafc',border:'#94a3b8',text:'#475569',label:'NEUTRAL'},
+  SELL:{bg:'#fff1f2',border:'#f87171',text:'#b91c1c',label:'SELL'},
+  STRONG_SELL:{bg:'#fef2f2',border:'#ef4444',text:'#991b1b',label:'STRONG SELL'},
+};
+
+// ── FIX: user is actively typing guard ───────────────────────────────────────
+// Prevents WebSocket ticks from blowing away focused input fields
+function userIsTyping(){
+  const el=document.activeElement;
+  if(!el) return false;
+  return el.tagName==='INPUT'||el.tagName==='TEXTAREA';
+}
+
+// ── Valuation helpers ─────────────────────────────────────────────────────────
+function verdictClass(v){return{cheap:'val-verdict-cheap',fair:'val-verdict-fair',rich:'val-verdict-rich',unknown:'val-verdict-unknown'}[v]||'val-verdict-unknown';}
+function verdictLabel(v){return{cheap:'💚 Cheap',fair:'🟡 Fair Value',rich:'🔴 Richly Valued',unknown:'⬜ Valuation N/A'}[v]||'⬜ N/A';}
+
+// ── Indicators ────────────────────────────────────────────────────────────────
+function calcRSI(c,n=14){
+  if(c.length<n+1)return null;
+  const d=c.slice(1).map((v,i)=>v-c[i]);
+  let ag=d.slice(0,n).reduce((s,v)=>s+Math.max(v,0),0)/n,al=d.slice(0,n).reduce((s,v)=>s+Math.max(-v,0),0)/n;
+  for(const v of d.slice(n)){ag=(ag*(n-1)+Math.max(v,0))/n;al=(al*(n-1)+Math.max(-v,0))/n;}
+  return al===0?100:100-100/(1+ag/al);
+}
+function calcEMA(c,n){
+  if(c.length<n)return null;
+  const k=2/(n+1);let v=c.slice(0,n).reduce((a,b)=>a+b,0)/n;
+  for(const x of c.slice(n))v=x*k+v*(1-k);return v;
+}
+function calcMACD(c){
+  if(c.length<35)return{line:null,sig:null};
+  const s=[];for(let i=26;i<=c.length;i++){const e12=calcEMA(c.slice(0,i),12),e26=calcEMA(c.slice(0,i),26);if(e12&&e26)s.push(e12-e26);}
+  return{line:s.at(-1)??null,sig:s.length>=9?calcEMA(s,9):null};
+}
+function calcSMA(c,n){return c.length<n?null:c.slice(-n).reduce((a,b)=>a+b,0)/n;}
+function computeSignal(price,closes){
+  const rsi=calcRSI(closes),{line:macd,sig:macdSig}=calcMACD(closes);
+  const sma20=calcSMA(closes,20),sma50=calcSMA(closes,50);
+  let score=0,reasons=[];
+  if(rsi!==null){
+    if(rsi<30){score+=2;reasons.push(`RSI ${rsi.toFixed(1)} — oversold`);}
+    else if(rsi<45){score+=1;reasons.push(`RSI ${rsi.toFixed(1)} — bullish lean`);}
+    else if(rsi>70){score-=2;reasons.push(`RSI ${rsi.toFixed(1)} — overbought`);}
+    else if(rsi>55){score-=1;reasons.push(`RSI ${rsi.toFixed(1)} — bearish lean`);}
+    else reasons.push(`RSI ${rsi.toFixed(1)} — neutral`);
+  }
+  if(macd!==null&&macdSig!==null){macd>macdSig?(score+=1,reasons.push('MACD above signal — bullish')):(score-=1,reasons.push('MACD below signal — bearish'));}
+  if(price&&sma20){price>sma20?(score+=1,reasons.push('Price above SMA20')):(score-=1,reasons.push('Price below SMA20'));}
+  if(sma20&&sma50){sma20>sma50?(score+=1,reasons.push('SMA20 > SMA50 — golden zone')):(score-=1,reasons.push('SMA20 < SMA50 — death zone'));}
+  const tag=score>=3?'STRONG_BUY':score>=1?'BUY':score<=-3?'STRONG_SELL':score<=-1?'SELL':'NEUTRAL';
+  return{tag,score,reasons,rsi:rsi?+rsi.toFixed(1):null,macd:macd?+macd.toFixed(3):null,macdSig:macdSig?+macdSig.toFixed(3):null,sma20:sma20?+sma20.toFixed(2):null,sma50:sma50?+sma50.toFixed(2):null};
+}
+
+// ── Alpaca ────────────────────────────────────────────────────────────────────
+function aH(){return{'APCA-API-KEY-ID':KEY_ID,'APCA-API-SECRET-KEY':SECRET,'Accept':'application/json'};}
+async function fetchSnap(sym){
+  const r=await fetch(`${DATA_URL}/v2/stocks/${sym}/snapshot?feed=iex`,{headers:aH()});
+  if(!r.ok)throw new Error(r.status===403?'Invalid credentials':r.status===422?`Unknown: ${sym}`:`HTTP ${r.status}`);
+  const d=await r.json();
+  return{price:d.latestTrade?.p??d.latestQuote?.ap??null,high:d.dailyBar?.h??null,low:d.dailyBar?.l??null,prevClose:d.prevDailyBar?.c??null,volume:d.dailyBar?.v??null};
+}
+async function fetchBars(sym){
+  const start=new Date(Date.now()-90*864e5).toISOString();
+  const r=await fetch(`${DATA_URL}/v2/stocks/${sym}/bars?timeframe=1Day&start=${start}&limit=60&adjustment=raw&feed=iex`,{headers:aH()});
+  if(!r.ok)return[];
+  const d=await r.json();return(d.bars||[]).map(b=>b.c);
+}
+async function loadTicker(sym){
+  const[snap,bars]=await Promise.all([fetchSnap(sym),fetchBars(sym)]);
+  if(!snap.price)throw new Error('No price data');
+  const closes=bars.length?[...bars.slice(0,-1),snap.price]:[snap.price];
+  const change=snap.prevClose?+(snap.price-snap.prevClose).toFixed(2):null;
+  const changePct=snap.prevClose?+((snap.price-snap.prevClose)/snap.prevClose*100).toFixed(2):null;
+  const sig=computeSignal(snap.price,closes);
+  CLOSES[sym]=closes.slice(-30);
+  return{...snap,change,changePct,closes:closes.slice(-30),...sig};
+}
+
+// ── AI ────────────────────────────────────────────────────────────────────────
+async function fetchAI(sym,data){
+  if(!ANTHROPIC_KEY)throw new Error('Add Anthropic API key to enable AI analysis');
+  const systemPrompt=`You are a senior options trading analyst who combines technical analysis, fundamental valuation, and market news to give actionable options recommendations.
+
+VALUATION-DRIVEN OPTIONS STRATEGY (V2.2):
+Look up P/E, Forward P/E, and industry average P/E via web search, then apply this logic:
+
+VALUATION VERDICTS:
+- CHEAP: Forward P/E significantly below industry avg, OR stock down 20%+ from 52wk high with strong fundamentals
+- FAIR: Within 15% of industry average P/E
+- RICH: Forward P/E well above industry avg, priced for perfection
+
+OPTIONS RATING BASED ON VALUATION:
+- SELL PUT (CSP): Rate HIGH when CHEAP (you WANT to own it at an even cheaper cost basis via assignment). Rate LOW when RICH.
+- SELL CALL (Covered): Rate HIGH when RICH+overbought. Rate LOW/AVOID when CHEAP (do NOT cap upside on beaten-down stock).
+- BUY CALL LEAPS: Rate HIGH when CHEAP+beaten-down+strong fundamentals. Rate LOW when RICH.
+- BUY PUT: Rate HIGH when RICH+RSI>65. Rate LOW when CHEAP.
+
+STRICT EXPIRY RULES — compute these dynamically from TODAY_DATE, do NOT copy the example dates literally:
+- BUY CALL (LEAPS): minimum 1 year from today. Example format only: "Jun 2027"
+- SELL PUT: pick a Friday 1-2 weeks from today. Example format only: "Jul 10 2026"
+- SELL CALL: pick a Friday 1-2 weeks from today. Example format only: "Jul 10 2026"
+- BUY PUT: pick a Friday 2-4 weeks from today. Example format only: "Jul 24 2026"
+TODAY_DATE is ${new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}. Calculate all expiry dates relative to this real date — the example dates above are just formatting templates, not the actual dates to use.
+
+Return ONLY a single raw JSON object. No markdown. No backticks. All strings on ONE LINE under 130 chars. Plain ASCII only.`;
+
+  const userPrompt=`Analyze ${sym} for value-aware options trading. Search for P/E, Forward P/E, industry avg P/E, 52wk high, recent news.
+
+TECHNICALS: Price $${data.price?.toFixed(2)} | Change ${data.changePct?.toFixed(2)}% | RSI ${data.rsi??'N/A'} | MACD ${data.macd??'N/A'}/${data.macdSig??'N/A'} | SMA20 ${data.sma20?'$'+data.sma20:'N/A'} | SMA50 ${data.sma50?'$'+data.sma50:'N/A'} | Signal ${data.tag} (${data.score}/5)
+
+Search: "${sym} P/E ratio forward PE industry average 2026" and "${sym} stock news June 2026"
+
+Return this exact JSON (all strings single line, under 130 chars, ASCII only):
+{"verdict":"BUY","summary":"2-3 sentence assessment.","pe":28.5,"forward_pe":22.1,"industry_pe":30.0,"val_verdict":"cheap","val_context":"2 sentence valuation vs peers and options strategy implication.","news_catalyst":"Latest news one line.","market_trend":"1 sentence sector trend.","buy_call":{"strike":"$XXX","expiry":"<calc: ~1yr+ from today, format Mon YYYY>","delta":"~0.55","rating":"HIGH","rationale":"One line LEAPS rationale."},"sell_put":{"strike":"$XXX","expiry":"<calc: Friday 1-2wks from today, format Mon DD YYYY>","premium_est":"~$1.50","rating":"HIGH","rationale":"One line CSP rationale."},"sell_call":{"strike":"$XXX","expiry":"<calc: Friday 1-2wks from today, format Mon DD YYYY>","premium_est":"~$1.20","rating":"LOW","rationale":"One line CC rationale."},"buy_put":{"strike":"$XXX","expiry":"<calc: Friday 2-4wks from today, format Mon DD YYYY>","rating":"LOW","rationale":"One line hedge rationale."},"key_risk":"Single biggest risk one line.","support":"$XXX","resistance":"$XXX"}`;
+
+  const res=await fetch(ANTHROPIC,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1400,system:systemPrompt,messages:[{role:'user',content:userPrompt}],tools:[{type:'web_search_20250305',name:'web_search'}]})
+  });
+  if(!res.ok)throw new Error(`AI ${res.status}`);
+  const d=await res.json();
+  if(d.error)throw new Error(d.error.message);
+  const text=(d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
+  // ── Bulletproof JSON extractor ──────────────────────────────────────────────
+  // Finds the FIRST complete {...} block, ignores anything before or after it.
+  function extractJSON(str){
+    const start=str.indexOf('{');
+    if(start===-1) throw new Error('No JSON found in AI response');
+    let depth=0,inStr=false,esc=false,end=-1;
+    for(let i=start;i<str.length;i++){
+      const ch=str[i];
+      if(esc){esc=false;continue;}
+      if(ch==='\\'){esc=true;continue;}
+      if(ch==='"'){inStr=!inStr;continue;}
+      if(inStr)continue;
+      if(ch==='{')depth++;
+      else if(ch==='}'){depth--;if(depth===0){end=i;break;}}
+    }
+    if(end===-1) throw new Error('Incomplete JSON object in AI response');
+    let raw=str.slice(start,end+1);
+    // Fix literal newlines/tabs inside string values only
+    let fixed='',inS=false,es=false;
+    for(let i=0;i<raw.length;i++){
+      const ch=raw[i];
+      if(es){fixed+=ch;es=false;continue;}
+      if(ch==='\\'){fixed+=ch;es=true;continue;}
+      if(ch==='"'){fixed+=ch;inS=!inS;continue;}
+      if(inS){
+        if(ch==='\n'){fixed+='\\n';continue;}
+        if(ch==='\r'){fixed+='\\r';continue;}
+        if(ch==='\t'){fixed+='\\t';continue;}
+      }
+      fixed+=ch;
+    }
+    try{return JSON.parse(fixed);}
+    catch(e){
+      // Last resort: strip all ASCII control chars and retry
+      const clean=fixed.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g,'');
+      try{return JSON.parse(clean);}
+      catch(e2){throw new Error('JSON parse failed: '+e2.message+' — raw: '+fixed.slice(0,120));}
+    }
+  }
+  return extractJSON(text);
+}
+
+async function getAI(sym){
+  const t=TICKERS.find(x=>x.symbol===sym);if(!t||!t.data)return;
+  t.aiLoading=true;t.ai=null;render();
+  try{
+    t.ai=await fetchAI(sym,t.data);
+    if(t.ai&&!t.ai.error){
+      t.pe=t.ai.pe||null;t.forwardPe=t.ai.forward_pe||null;
+      t.industryPe=t.ai.industry_pe||null;t.valVerdict=t.ai.val_verdict||'unknown';
+    }
+  }catch(e){t.ai={error:e.message};}
+  t.aiLoading=false;activeAISym=sym;render();
+  setTimeout(()=>{const el=document.getElementById('ai-inline-'+sym);if(el)el.scrollIntoView({behavior:'smooth',block:'nearest'});},50);
+}
+
+// ── Market ────────────────────────────────────────────────────────────────────
+function isMarketOpen(){
+  const et=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
+  if(et.getDay()===0||et.getDay()===6)return false;
+  const m=et.getHours()*60+et.getMinutes();return m>=570&&m<960;
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+function startStream(syms){
+  if(ws){ws.close();ws=null;}
+  ws=new WebSocket(STREAM_URL);
+  ws.onopen=()=>ws.send(JSON.stringify({action:'auth',key:KEY_ID,secret:SECRET}));
+  ws.onmessage=(evt)=>{
+    const msgs=JSON.parse(evt.data);
+    for(const msg of msgs){
+      if(msg.T==='success'&&msg.msg==='authenticated'){
+        ws.send(JSON.stringify({action:'subscribe',trades:syms}));
+        streamingSymbols=syms;render();
+      }
+      if(msg.T==='t'){
+        const t=TICKERS.find(x=>x.symbol===msg.S);
+        if(t&&t.data){
+          const price=msg.p,closes=[...(CLOSES[msg.S]||[]).slice(0,-1),price];
+          const change=t.data.prevClose?+(price-t.data.prevClose).toFixed(2):t.data.change;
+          const changePct=t.data.prevClose?+((price-t.data.prevClose)/t.data.prevClose*100).toFixed(2):t.data.changePct;
+          t.data={...t.data,price,change,changePct,closes,...computeSignal(price,closes)};
+          CLOSES[msg.S]=closes;
+          // ── FIX: only do surgical price update if user is typing ──
+          if(userIsTyping()){
+            updatePriceOnly(msg.S,t.data);
+          } else {
+            render();
+          }
+        }
+      }
+      if(msg.T==='error'){streamingSymbols=[];render();}
+    }
+  };
+  ws.onerror=()=>{streamingSymbols=[];render();};
+  ws.onclose=()=>{streamingSymbols=[];render();};
+}
+function stopStream(){if(ws){ws.close();ws=null;}streamingSymbols=[];render();}
+
+// ── Surgical price-only DOM update (used when user is typing) ─────────────
+function updatePriceOnly(sym,d){
+  const el=document.getElementById('price-spot-'+sym);
+  if(!el)return;
+  const up=d.changePct>=0;
+  const chColor=up?'#16a34a':'#dc2626';
+  el.innerHTML=`
+    <div style="font-size:20px;font-weight:800;color:#0f172a;line-height:1;letter-spacing:-.3px">$${d.price?.toFixed(2)??'—'}</div>
+    <div style="margin-top:3px;display:inline-flex;align-items:center;gap:3px;background:${up?'#f0fdf4':'#fef2f2'};border:1px solid ${chColor}33;padding:2px 6px;border-radius:10px">
+      <span style="font-size:10px;font-weight:700;color:${chColor}">${up?'▲':'▼'} ${up?'+':''}${d.changePct?.toFixed(2)??'0.00'}%</span>
+      <span style="font-size:9px;color:${chColor};opacity:.7">${up?'+':''}${d.change?.toFixed(2)??'0.00'}</span>
+    </div>`;
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function spark(closes,color){
+  if(!closes||closes.length<2)return'';
+  const mn=Math.min(...closes),mx=Math.max(...closes),r=mx-mn||1,W=68,H=24;
+  const pts=closes.map((v,i)=>`${(i/(closes.length-1))*W},${H-((v-mn)/r)*H}`).join(' ');
+  return`<svg width="${W}" height="${H}" style="display:block;overflow:visible;flex-shrink:0"><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+function row(label,val,color){
+  return`<div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:1px solid #f1f5f9">
+    <span style="font-size:10px;color:#64748b;font-family:monospace">${label}</span>
+    <span style="font-size:10px;color:${color};font-weight:700;font-family:monospace">${val}</span>
+  </div>`;
+}
+function ratingBadge(r){
+  const map={HIGH:{bg:'#dcfce7',c:'#15803d'},MEDIUM:{bg:'#fefce8',c:'#854d0e'},LOW:{bg:'#f8fafc',c:'#64748b'},AVOID:{bg:'#fef2f2',c:'#b91c1c'}};
+  const s=map[r]||map.LOW;
+  return`<span style="font-size:8px;font-weight:800;background:${s.bg};color:${s.c};padding:1px 6px;border-radius:4px;font-family:monospace">${r||'—'}</span>`;
+}
+
+// ── AI inline panel ───────────────────────────────────────────────────────────
+function aiInlinePanel(sym){
+  const t=TICKERS.find(x=>x.symbol===sym);
+  if(!t||!t.ai||t.ai.error)return'';
+  const a=t.ai,d=t.data;
+  const vc=a.verdict==='BUY'?'#15803d':a.verdict==='SELL'?'#b91c1c':'#854d0e';
+  const vb=a.verdict==='BUY'?'#dcfce7':a.verdict==='SELL'?'#fef2f2':'#fefce8';
+  const vv=a.val_verdict||'unknown';
+  return`<div id="ai-inline-${sym}" style="grid-column:1/-1;background:#fff;border:2px solid ${vc}55;border-radius:14px;padding:20px 22px;box-shadow:0 4px 16px rgba(0,0,0,.07);animation:fadeIn .25s ease">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1.5px solid #f1f5f9">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:16px;font-weight:800;color:#0f172a;font-family:monospace">${sym}</span>
+        <span style="background:${vb};border:2px solid ${vc};color:${vc};padding:2px 11px;border-radius:10px;font-size:11px;font-weight:800">${a.verdict==='BUY'?'↑ BUY':a.verdict==='SELL'?'↓ SELL':'→ HOLD'}</span>
+        ${d?`<span style="font-size:13px;font-weight:700;color:#0f172a">$${d.price?.toFixed(2)}</span><span style="font-size:11px;color:${d.changePct>=0?'#16a34a':'#dc2626'};font-weight:600">&nbsp;${d.changePct>=0?'+':''}${d.changePct?.toFixed(2)}%</span>`:''}
+        <span class="${verdictClass(vv)} val-verdict-badge">${verdictLabel(vv)}</span>
+        <span style="font-size:9px;font-weight:800;color:#6d28d9;background:#f5f3ff;padding:2px 8px;border-radius:6px">🤖 AI V2.2</span>
+      </div>
+      <button onclick="toggleAIPanel('${sym}')" style="background:#f1f5f9;border:1.5px solid #e2e8f0;color:#64748b;padding:4px 11px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;flex-shrink:0">✕ Close</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1.6fr 1fr auto;gap:12px;margin-bottom:12px;align-items:start">
+      <div style="background:#f8fafc;border-radius:9px;padding:11px 13px">
+        <div style="font-size:9px;font-weight:800;color:#475569;letter-spacing:.06em;margin-bottom:5px">SUMMARY</div>
+        <p style="font-size:11px;color:#1e293b;line-height:1.7;margin:0">${a.summary}</p>
+      </div>
+      ${a.news_catalyst?`<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:9px;padding:11px 13px"><div style="font-size:9px;font-weight:800;color:#92400e;letter-spacing:.06em;margin-bottom:5px">📰 CATALYST</div><p style="font-size:11px;color:#92400e;line-height:1.6;margin:0">${a.news_catalyst}</p>${a.market_trend?`<p style="font-size:10px;color:#b45309;margin-top:6px;line-height:1.5">📈 ${a.market_trend}</p>`:''}</div>`:'<div></div>'}
+      ${(a.support||a.resistance)?`<div style="display:flex;flex-direction:column;gap:6px;min-width:90px">
+        ${a.support?`<div style="background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:8px;padding:7px 11px;text-align:center"><div style="font-size:8px;color:#15803d;font-weight:800;margin-bottom:2px">SUPPORT</div><div style="font-size:14px;color:#166534;font-weight:800;font-family:monospace">${a.support}</div></div>`:''}
+        ${a.resistance?`<div style="background:#fef2f2;border:1.5px solid #fecaca;border-radius:8px;padding:7px 11px;text-align:center"><div style="font-size:8px;color:#b91c1c;font-weight:800;margin-bottom:2px">RESISTANCE</div><div style="font-size:14px;color:#991b1b;font-weight:800;font-family:monospace">${a.resistance}</div></div>`:''}
+      </div>`:''}
+    </div>
+    ${a.val_context?`<div style="background:#f0f9ff;border:1.5px solid #bae6fd;border-radius:9px;padding:11px 14px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+        <div style="font-size:9px;font-weight:800;color:#0369a1;letter-spacing:.06em">📐 VALUATION CONTEXT</div>
+        ${a.pe?`<span style="font-size:10px;font-family:monospace;font-weight:700;background:#fff;border:1px solid #bae6fd;padding:1px 7px;border-radius:4px;color:#0369a1">P/E: ${a.pe}</span>`:''}
+        ${a.forward_pe?`<span style="font-size:10px;font-family:monospace;font-weight:700;background:#fff;border:1px solid #bae6fd;padding:1px 7px;border-radius:4px;color:#0369a1">Fwd P/E: ${a.forward_pe}</span>`:''}
+        ${a.industry_pe?`<span style="font-size:10px;font-family:monospace;font-weight:700;background:#f8fafc;border:1px solid #e2e8f0;padding:1px 7px;border-radius:4px;color:#64748b">Sector avg: ${a.industry_pe}</span>`:''}
+        <span class="${verdictClass(vv)} val-verdict-badge" style="margin:0">${verdictLabel(vv)}</span>
+      </div>
+      <p style="font-size:11px;color:#0c4a6e;line-height:1.65;margin:0">${a.val_context}</p>
+    </div>`:''}
+    <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px;margin-bottom:12px">
+      <div style="background:#f0fdf4;border:2px solid #16a34a44;border-radius:10px;padding:13px 14px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><div style="font-size:9px;font-weight:800;color:#15803d">📈 BUY CALL</div>${ratingBadge(a.buy_call?.rating)}</div>
+        <div style="font-size:8px;background:#dcfce7;color:#15803d;padding:1px 6px;border-radius:4px;font-weight:700;display:inline-block;margin-bottom:8px">LEAPS — 1yr+</div>
+        <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:3px"><span style="font-size:20px;font-weight:800;color:#166534;font-family:monospace">${a.buy_call?.strike}</span>${a.buy_call?.delta?`<span style="font-size:9px;color:#15803d;font-weight:600;background:#dcfce7;padding:1px 4px;border-radius:3px">Δ${a.buy_call.delta}</span>`:''}</div>
+        <div style="font-size:9px;color:#15803d;font-weight:600;margin-bottom:5px">🗓 ${a.buy_call?.expiry}</div>
+        <div style="font-size:10px;color:#166534;line-height:1.55">${a.buy_call?.rationale}</div>
+      </div>
+      <div style="background:#fefce8;border:2px solid #ca8a0444;border-radius:10px;padding:13px 14px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap"><div style="font-size:9px;font-weight:800;color:#854d0e">💰 SELL PUT</div>${ratingBadge(a.sell_put?.rating)}</div>
+        <div style="font-size:8px;background:#fef9c3;color:#854d0e;padding:1px 6px;border-radius:4px;font-weight:700;display:inline-block;margin-bottom:6px">CSP 1–2 Wks</div>
+        <div style="font-size:20px;font-weight:800;color:#854d0e;font-family:monospace;margin-bottom:3px">${a.sell_put?.strike}</div>
+        <div style="font-size:9px;color:#92400e;font-weight:600;margin-bottom:2px">🗓 ${a.sell_put?.expiry}</div>
+        ${a.sell_put?.premium_est?`<div style="font-size:9px;color:#854d0e;font-weight:700;margin-bottom:4px">Est. ${a.sell_put.premium_est}</div>`:''}
+        <div style="font-size:9px;color:#92400e;line-height:1.5">${a.sell_put?.rationale}</div>
+      </div>
+      <div style="background:#fff7ed;border:2px solid #ea580c44;border-radius:10px;padding:13px 14px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap"><div style="font-size:9px;font-weight:800;color:#c2410c">📤 SELL CALL</div>${ratingBadge(a.sell_call?.rating)}</div>
+        <div style="font-size:8px;background:#ffedd5;color:#c2410c;padding:1px 6px;border-radius:4px;font-weight:700;display:inline-block;margin-bottom:6px">CC 1–2 Wks</div>
+        <div style="font-size:20px;font-weight:800;color:#c2410c;font-family:monospace;margin-bottom:3px">${a.sell_call?.strike}</div>
+        <div style="font-size:9px;color:#9a3412;font-weight:600;margin-bottom:2px">🗓 ${a.sell_call?.expiry}</div>
+        ${a.sell_call?.premium_est?`<div style="font-size:9px;color:#c2410c;font-weight:700;margin-bottom:4px">Est. ${a.sell_call.premium_est}</div>`:''}
+        <div style="font-size:9px;color:#9a3412;line-height:1.5">${a.sell_call?.rationale}</div>
+      </div>
+      <div style="background:#fef2f2;border:2px solid #ef444444;border-radius:10px;padding:13px 14px">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;flex-wrap:wrap"><div style="font-size:9px;font-weight:800;color:#b91c1c">📉 BUY PUT</div>${ratingBadge(a.buy_put?.rating)}</div>
+        <div style="font-size:8px;background:#fee2e2;color:#b91c1c;padding:1px 6px;border-radius:4px;font-weight:700;display:inline-block;margin-bottom:6px">Hedge 2–4 Wks</div>
+        <div style="font-size:20px;font-weight:800;color:#b91c1c;font-family:monospace;margin-bottom:3px">${a.buy_put?.strike}</div>
+        <div style="font-size:9px;color:#991b1b;font-weight:600;margin-bottom:5px">🗓 ${a.buy_put?.expiry}</div>
+        <div style="font-size:9px;color:#991b1b;line-height:1.5">${a.buy_put?.rationale}</div>
+      </div>
+    </div>
+    <div style="background:#fff7ed;border:1.5px solid #fed7aa;border-radius:8px;padding:9px 13px;display:flex;align-items:flex-start;gap:8px">
+      <span style="font-size:13px;flex-shrink:0">⚠️</span>
+      <div><span style="font-size:10px;font-weight:800;color:#9a3412">KEY RISK: </span><span style="font-size:10px;color:#9a3412;line-height:1.6">${a.key_risk}</span></div>
+      <span style="margin-left:auto;font-size:8px;color:#cbd5e1;flex-shrink:0;align-self:flex-end">Not financial advice</span>
+    </div>
+  </div>`;
+}
+
+function aiHTML(t){
+  if(t.aiLoading)return`<div style="margin-top:8px;padding:9px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px;display:flex;align-items:center;gap:8px;color:#64748b;font-size:11px"><div class="spinner"></div>Analyzing ${t.symbol} — fetching valuation + news…</div>`;
+  if(!t.ai)return'';
+  if(t.ai.error)return`<div style="margin-top:8px;padding:7px;background:#fef2f2;border:1px solid #fca5a5;border-radius:7px;font-size:10px;color:#dc2626">⚠ ${t.ai.error}</div>`;
+  const a=t.ai,vc=a.verdict==='BUY'?'#15803d':a.verdict==='SELL'?'#b91c1c':'#854d0e',vb=a.verdict==='BUY'?'#dcfce7':a.verdict==='SELL'?'#fef2f2':'#fefce8';
+  const vv=a.val_verdict||'unknown',isOpen=activeAISym===t.symbol;
+  return`<div style="margin-top:8px;background:${vb};border:1.5px solid ${vc}55;border-radius:8px;padding:7px 10px;cursor:pointer;user-select:none" onclick="toggleAIPanel('${t.symbol}')">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <span style="background:${vb};border:1.5px solid ${vc};color:${vc};padding:1px 8px;border-radius:8px;font-size:10px;font-weight:800">${a.verdict==='BUY'?'↑ BUY':a.verdict==='SELL'?'↓ SELL':'→ HOLD'}</span>
+        <span class="${verdictClass(vv)} val-verdict-badge" style="margin:0">${verdictLabel(vv)}</span>
+        <span style="font-size:10px;color:#475569;font-weight:600">AI ready</span>
+      </div>
+      <span style="font-size:11px;color:${vc};font-weight:700">${isOpen?'▲ Close':'▼ View analysis'}</span>
+    </div>
+  </div>`;
+}
+
+// ── Card HTML ─────────────────────────────────────────────────────────────────
+function cardHTML(sym){
+  const t=TICKERS.find(x=>x.symbol===sym);if(!t)return'';
+  const{data:d,loading,error}=t;
+  const c=d&&d.tag?SIG[d.tag]:SIG.NEUTRAL,up=d?d.changePct>=0:true;
+  const isLive=streamingSymbols.includes(sym),isActive=activeAISym===sym;
+  const vv=t.valVerdict||'unknown';
+  let inner='';
+  if(loading){
+    inner=`<div style="display:flex;align-items:center;gap:8px;padding:18px 0;color:#94a3b8;font-size:11px"><div class="spinner"></div>Fetching…</div>`;
+  }else if(error&&!d){
+    inner=`<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:7px;color:#dc2626;font-size:10px;margin-top:5px">⚠ ${error}</div>
+    ${KEY_ID?`<button onclick="reloadOne('${sym}')" style="margin-top:5px;background:#f1f5f9;border:1px solid #cbd5e1;color:#475569;padding:3px 8px;border-radius:5px;font-size:10px">↻ Retry</button>`:''}`;
+  }else if(d){
+    const chColor=up?'#16a34a':'#dc2626';
+    inner=`
+      <!-- price spot: surgical update target -->
+      <div id="price-spot-${sym}" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div>
+          <div style="font-size:20px;font-weight:800;color:#0f172a;line-height:1;letter-spacing:-.3px">$${d.price?.toFixed(2)??'—'}</div>
+          <div style="margin-top:3px;display:inline-flex;align-items:center;gap:3px;background:${up?'#f0fdf4':'#fef2f2'};border:1px solid ${chColor}33;padding:2px 6px;border-radius:10px">
+            <span style="font-size:10px;font-weight:700;color:${chColor}">${up?'▲':'▼'} ${up?'+':''}${d.changePct?.toFixed(2)??'0.00'}%</span>
+            <span style="font-size:9px;color:${chColor};opacity:.7">${up?'+':''}${d.change?.toFixed(2)??'0.00'}</span>
+          </div>
+        </div>
+        ${spark(d.closes&&d.closes.length?d.closes:[d.price],chColor)}
+      </div>
+      <div class="val-chips">
+        <div class="val-chip"><div class="val-chip-label">P/E</div><div class="val-chip-value ${t.pe?(t.pe<15?'val-cheap':t.pe<28?'val-fair':'val-rich'):'val-na'}">${t.pe?t.pe.toFixed(1):'—'}</div></div>
+        <div class="val-chip"><div class="val-chip-label">Fwd P/E</div><div class="val-chip-value ${t.forwardPe?(t.forwardPe<12?'val-cheap':t.forwardPe<22?'val-fair':'val-rich'):'val-na'}">${t.forwardPe?t.forwardPe.toFixed(1):'—'}</div></div>
+        ${t.industryPe?`<div class="val-chip"><div class="val-chip-label">Sector</div><div class="val-chip-value val-na">${t.industryPe.toFixed(1)}</div></div>`:''}
+        <div class="val-chip" style="flex:1"><div class="val-chip-label">Valuation</div><div class="val-chip-value ${vv==='cheap'?'val-cheap':vv==='rich'?'val-rich':vv==='fair'?'val-fair':'val-na'}">${vv==='cheap'?'CHEAP':vv==='fair'?'FAIR':vv==='rich'?'RICH':'—'}</div></div>
+      </div>
+      ${vv!=='unknown'?`<div class="${verdictClass(vv)} val-verdict-badge">${verdictLabel(vv)}</div>`:''}
+      <div style="background:#f8fafc;border-radius:6px;padding:3px 7px;margin-bottom:7px">
+        ${d.high?row('H / L',`$${d.high.toFixed(2)} / $${d.low?.toFixed(2)}`,'#334155'):''}
+        ${d.volume?row('Vol',(d.volume/1e6).toFixed(1)+'M','#475569'):''}
+        ${d.rsi!=null?row('RSI',d.rsi.toFixed(1),d.rsi<30?'#16a34a':d.rsi>70?'#dc2626':'#0369a1'):''}
+        ${d.macd!=null?row('MACD',`${d.macd.toFixed(2)} / ${d.macdSig?.toFixed(2)??'—'}`,d.macd>d.macdSig?'#16a34a':'#dc2626'):''}
+        ${d.sma20!=null?row('SMA20','$'+d.sma20.toFixed(2),d.price>d.sma20?'#16a34a':'#dc2626'):''}
+        ${d.sma50!=null?row('SMA50','$'+d.sma50.toFixed(2),d.sma20>d.sma50?'#16a34a':'#dc2626'):''}
+      </div>
+      <div style="background:#f8fafc;border-radius:6px;padding:5px 7px;margin-bottom:7px">
+        ${d.reasons?.slice(0,3).map(r=>`<div style="font-size:9px;color:#475569;font-family:monospace;line-height:1.8">· ${r}</div>`).join('')??''}
+        ${d.score!=null?`<div style="font-size:9px;color:#94a3b8;font-family:monospace;padding-top:2px;border-top:1px solid #e2e8f0;margin-top:2px">score: ${d.score>0?'+':''}${d.score} / 5</div>`:''}
+      </div>
+      <button onclick="getAI('${sym}')" ${t.aiLoading||!ANTHROPIC_KEY?'disabled':''} title="${ANTHROPIC_KEY?'Get AI analysis':'Add Anthropic key to enable'}"
+        style="width:100%;background:${ANTHROPIC_KEY?'linear-gradient(135deg,#1d4ed8,#4f46e5)':'#f1f5f9'};border:${ANTHROPIC_KEY?'none':'1px solid #e2e8f0'};color:${ANTHROPIC_KEY?'#fff':'#94a3b8'};padding:6px;border-radius:6px;font-size:10px;font-weight:700;cursor:${ANTHROPIC_KEY?'pointer':'not-allowed'}">
+        ${t.aiLoading?'<span class="spinner" style="border-top-color:#fff;width:11px;height:11px"></span>':ANTHROPIC_KEY?'🤖 Value + AI Analysis':'🤖 Add Anthropic key'}
+      </button>
+      ${aiHTML(t)}
+      ${KEY_ID?`<button onclick="reloadOne('${sym}')" title="Refresh" style="position:absolute;bottom:9px;right:9px;background:#f1f5f9;border:1px solid #e2e8f0;color:#64748b;padding:2px 6px;border-radius:4px;font-size:10px">↻</button>`:''}
+    `;
+  }
+  return`<div style="background:#fff;border:1.5px solid ${isActive?'#6d28d9':error&&!d?'#fca5a5':d&&d.tag&&d.tag!=='NEUTRAL'?c.border:'#e2e8f0'};border-radius:12px;padding:13px;position:relative;box-shadow:${isActive?'0 0 0 3px #6d28d922':'0 1px 3px rgba(0,0,0,.05)'};transition:border-color .2s,box-shadow .2s">
+    ${isLive?'<span class="live-dot" style="position:absolute;top:12px;left:12px"></span>':''}
+    <button onclick="removeTicker('${sym}')" style="position:absolute;top:7px;right:7px;background:none;border:none;color:#cbd5e1;font-size:15px;line-height:1;padding:2px 4px;border-radius:3px">×</button>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:7px;padding-right:16px;${isLive?'padding-left:14px':''}">
+      <div style="font-family:monospace;font-weight:800;font-size:15px;color:#0f172a;letter-spacing:.02em">${sym}</div>
+      ${d&&d.tag?`<span style="background:${c.bg};border:1.5px solid ${c.border};color:${c.text};padding:2px 7px;border-radius:10px;font-size:8px;font-weight:800;font-family:monospace;white-space:nowrap">${c.label}</span>`:''}
+    </div>
+    ${inner}
+  </div>`;
+}
+
+function secSummary(tickers){
+  const counts={};
+  tickers.forEach(sym=>{const t=TICKERS.find(x=>x.symbol===sym);if(t?.data?.tag&&t.data.tag!=='NEUTRAL')counts[t.data.tag]=(counts[t.data.tag]||0)+1;});
+  return Object.entries(SIG).filter(([k])=>k!=='NEUTRAL').map(([k,c])=>counts[k]?`<span style="font-size:8px;color:${c.text};background:${c.bg};border:1px solid ${c.border};padding:1px 5px;border-radius:8px;font-weight:700;font-family:monospace">${counts[k]} ${c.label}</span>`:'').join('');
+}
+
+function sectorHTML(sec){
+  const tickers=sec.tickers,activeInSector=tickers.includes(activeAISym)?activeAISym:null;
+  return`<div style="margin-bottom:24px">
+    <div class="sec-hdr" style="color:${sec.color}">${sec.name}<span style="font-size:10px;font-weight:500;color:#94a3b8;text-transform:none;letter-spacing:0">${sec.desc}</span><span style="display:flex;gap:3px;align-items:center">${secSummary(tickers)}</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px">
+      ${tickers.map(sym=>`<div>${cardHTML(sym)}</div>`).join('')}${activeInSector?aiInlinePanel(activeInSector):''}
+    </div>
+  </div>`;
+}
+
+// ── Top Recommendations ───────────────────────────────────────────────────────
+let TOP_RECS=null,CHAT_MESSAGES=[],CHAT_LOADING=false,chatCollapsed=false;
+
+async function fetchTopRecs(){
+  if(!ANTHROPIC_KEY){alert("Add your Anthropic API key first — click the 🤖 panel above.");return;}
+  // Disable button immediately for instant feedback
+  const gb=document.getElementById("genPicksBtn");
+  if(gb){gb.disabled=true;gb.textContent="⏳ Scanning…";gb.style.opacity="0.7";}
+  TOP_RECS={loading:true,error:null,strategies:{},market_context:'',generatedAt:null};render();
+  const snapshot=TICKERS.filter(t=>t.data?.price).map(t=>{
+    const d=t.data,sec=CLEAN.find(s=>s.tickers.includes(t.symbol));
+    const valStr=t.valVerdict!=='unknown'?` VAL:${t.valVerdict.toUpperCase()}${t.pe?' PE:'+t.pe:''}${t.forwardPe?' FwdPE:'+t.forwardPe:''}`:' ';
+    return`${t.symbol}(${sec?.name?.replace(/[^\w\s]/g,'').trim()||''}):$${d.price?.toFixed(2)} ${d.changePct>=0?'+':''}${d.changePct?.toFixed(2)}% RSI:${d.rsi??'N/A'} ${d.tag}(${d.score}/5)${valStr}`;
+  }).join('\n');
+  const systemPrompt=`You are a professional options trader using a VALUE-FIRST approach. Return ALL stocks qualifying with 80%+ confidence.
+STRATEGY: CSP=HIGH when CHEAP. CC=HIGH when RICH+overbought, AVOID when CHEAP. LEAPS=HIGH when CHEAP+beaten-down. BuyPut=HIGH when RICH+overbought.
+EXPIRY — compute from TODAY_DATE, do not copy example dates: BUY CALL 1yr+ from today | SELL CALL/PUT pick a Friday 1-2wks from today | BUY PUT pick a Friday 2-4wks from today. TODAY_DATE is ${new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}.
+Each pick: {"symbol":"X","strike":"$X","expiry":"X","confidence":85,"thesis":"one line","catalyst":"one line","risk":"one line","val_note":"one line"}
+ASCII only, single line strings, raw JSON only.`;
+  const userPrompt=`Watchlist:\n${snapshot}\n\nSearch "tech stock valuation options June 2026" then return ONLY:\n{"market_context":"1 sentence.","generated_at":"TIME","buy_call":[...],"sell_call":[...],"buy_put":[...],"sell_put":[...]}`;
+  try{
+    const res=await fetch(ANTHROPIC,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:3000,system:systemPrompt,messages:[{role:'user',content:userPrompt}],tools:[{type:'web_search_20250305',name:'web_search'}]})});
+    if(!res.ok)throw new Error(`API ${res.status}`);
+    const d=await res.json();if(d.error)throw new Error(d.error.message);
+    const text=(d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
+    function extractJ(str){
+      const s=str.indexOf('{');if(s===-1)throw new Error('No JSON');
+      let dep=0,inS=false,es=false,en=-1;
+      for(let i=s;i<str.length;i++){const c=str[i];if(es){es=false;continue;}if(c==='\\'){es=true;continue;}if(c==='"'){inS=!inS;continue;}if(inS)continue;if(c==='{')dep++;else if(c==='}'){dep--;if(dep===0){en=i;break;}}}
+      const chunk=str.slice(s,en===-1?undefined:en+1);
+      let fix='',iS=false,e2=false;
+      for(let i=0;i<chunk.length;i++){const c=chunk[i];if(e2){fix+=c;e2=false;continue;}if(c==='\\'){fix+=c;e2=true;continue;}if(c==='"'){fix+=c;iS=!iS;continue;}if(iS){if(c==='\n'){fix+='\\n';continue;}if(c==='\r'){fix+='\\r';continue;}if(c==='\t'){fix+='\\t';continue;}}fix+=c;}
+      try{return JSON.parse(fix);}catch(e){
+        let r=fix.replace(/,\s*[\[{][^\]\}]*$/,'').replace(/,\s*$/,'');
+        const ob=(r.match(/\[/g)||[]).length-(r.match(/\]/g)||[]).length;
+        const oc=(r.match(/\{/g)||[]).length-(r.match(/\}/g)||[]).length;
+        for(let i=0;i<ob;i++)r+=']';for(let i=0;i<oc;i++)r+='}';
+        return JSON.parse(r.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g,''));
+      }
+    }
+    const parsed=extractJ(text),norm=v=>Array.isArray(v)?v:v&&v.symbol?[v]:[];
+    TOP_RECS={loading:false,error:null,market_context:parsed.market_context||'',generatedAt:parsed.generated_at||new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',timeZone:'America/New_York'})+' ET',strategies:{buy_call:norm(parsed.buy_call),sell_call:norm(parsed.sell_call),buy_put:norm(parsed.buy_put),sell_put:norm(parsed.sell_put)}};
+  }catch(e){TOP_RECS={loading:false,error:e.message,strategies:{},market_context:'',generatedAt:''};}
+  render();
+}
+
+function pickCard(pick,border,text,bg){
+  const cc=pick.confidence>=90?'#15803d':pick.confidence>=85?'#0369a1':'#854d0e',cb=pick.confidence>=90?'#dcfce7':pick.confidence>=85?'#dbeafe':'#fef9c3';
+  return`<div style="flex:0 0 220px;background:#fff;border:1.5px solid ${border}44;border-radius:10px;padding:11px 13px;box-shadow:0 1px 4px ${border}11">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:7px">
+      <div><div style="font-family:monospace;font-weight:800;font-size:16px;color:#0f172a">${pick.symbol}</div><div style="font-size:9px;color:#64748b;margin-top:1px">🗓 ${pick.expiry}</div></div>
+      <div style="text-align:right"><div style="font-size:17px;font-weight:800;color:${text};font-family:monospace">${pick.strike}</div><div style="background:${cb};color:${cc};font-size:9px;font-weight:800;padding:1px 6px;border-radius:6px;margin-top:2px">${pick.confidence}%</div></div>
+    </div>
+    <div style="height:3px;background:#f1f5f9;border-radius:2px;margin-bottom:7px;overflow:hidden"><div style="height:3px;width:${pick.confidence}%;background:${cc};border-radius:2px"></div></div>
+    <div style="font-size:10px;color:#334155;line-height:1.5;margin-bottom:5px;font-weight:500">${pick.thesis}</div>
+    ${pick.val_note?`<div style="font-size:9px;color:#0369a1;background:#f0f9ff;border:1px solid #bae6fd;border-radius:4px;padding:3px 7px;margin-bottom:5px">📐 ${pick.val_note}</div>`:''}
+    <div style="font-size:9px;line-height:1.6;color:#64748b">${pick.catalyst?`<div>📰 ${pick.catalyst}</div>`:''} ${pick.risk?`<div style="color:#9a3412;margin-top:2px">⚠ ${pick.risk}</div>`:''}</div>
+  </div>`;
+}
+
+function strategyRow(label,icon,picks,bg,border,text,headerBg){
+  const hasPicks=picks&&picks.length>0;
+  return`<div style="background:${bg};border:2px solid ${border}44;border-radius:12px;overflow:hidden;margin-bottom:10px">
+    <div style="background:${headerBg};padding:10px 16px;display:flex;align-items:center;justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:8px"><span style="font-size:15px">${icon}</span><span style="font-size:12px;font-weight:800;color:${text}">${label}</span>${hasPicks?`<span style="background:rgba(255,255,255,.6);color:${text};font-size:9px;font-weight:800;padding:1px 7px;border-radius:8px">${picks.length} pick${picks.length>1?'s':''}</span>`:`<span style="background:rgba(255,255,255,.4);color:${text};font-size:9px;font-weight:600;padding:1px 7px;border-radius:8px;opacity:.7">No 80%+ pick</span>`}</div>
+      <div style="font-size:9px;color:${text};opacity:.7;font-weight:600">${label==='BUY CALL'?'Expiry: 1yr+ (LEAPS)':label==='SELL PUT'||label==='SELL CALL'?'Expiry: 1–2 weeks':'Expiry: 2–4 weeks'}</div>
+    </div>
+    <div style="padding:12px 14px;overflow-x:auto;-webkit-overflow-scrolling:touch">${hasPicks?`<div style="display:flex;gap:10px;min-width:min-content">${picks.map(p=>pickCard(p,border,text,bg)).join('')}</div>`:`<div style="display:flex;align-items:center;justify-content:center;height:80px;color:#94a3b8;font-size:11px;font-style:italic">No stocks met 80% confidence threshold</div>`}</div>
+  </div>`;
+}
+
+function topRecsHTML(){
+  const hasKey=!!ANTHROPIC_KEY;
+  if(TOP_RECS?.loading)return`<div style="background:#fff;border:1.5px solid #bfdbfe;border-radius:14px;padding:20px;margin-bottom:20px"><div style="display:flex;align-items:center;gap:10px;color:#1d4ed8"><div class="spinner" style="border-top-color:#1d4ed8;width:16px;height:16px"></div><div><div style="font-size:13px;font-weight:700">Scanning all ${TICKERS.length} tickers…</div><div style="font-size:11px;color:#64748b;margin-top:2px">Value + technicals + news · 80%+ confidence</div></div></div></div>`;
+  if(TOP_RECS?.error)return`<div style="background:#fef2f2;border:1.5px solid #fca5a5;border-radius:14px;padding:14px 18px;margin-bottom:20px"><div style="font-size:12px;color:#dc2626;font-weight:600">⚠ ${TOP_RECS.error}</div><button onclick="fetchTopRecs()" style="margin-top:8px;background:#fff;border:1px solid #fca5a5;color:#dc2626;padding:5px 12px;border-radius:6px;font-size:11px;cursor:pointer">↻ Retry</button></div>`;
+  const s=TOP_RECS?.strategies||{},hasAny=(s.buy_call?.length||0)+(s.sell_call?.length||0)+(s.buy_put?.length||0)+(s.sell_put?.length||0)>0;
+  return`<div style="background:#fff;border:1.5px solid #c7d2fe;border-radius:14px;padding:18px 20px;margin-bottom:20px;box-shadow:0 2px 8px rgba(99,102,241,.08)">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span style="font-size:18px">🎯</span><span style="font-size:15px;font-weight:800;color:#0f172a">Top Trade Recommendations</span><span style="background:#f0fdf4;border:1.5px solid #16a34a;color:#15803d;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:800">80%+ CONFIDENCE</span><span style="background:#f0f9ff;border:1.5px solid #bae6fd;color:#0369a1;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:700">📐 VALUE-AWARE V2.2</span>${!hasKey?`<span style="background:#fef9c3;border:1px solid #fde68a;color:#854d0e;padding:2px 8px;border-radius:8px;font-size:10px;font-weight:600">Add Anthropic key to enable</span>`:''}</div>${TOP_RECS?.market_context?`<p style="font-size:11px;color:#475569;margin-top:5px;line-height:1.5;max-width:700px">${TOP_RECS.market_context}</p>`:''}</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">${TOP_RECS?.generatedAt?`<span style="font-size:10px;color:#94a3b8">${TOP_RECS.generatedAt}</span>`:''}<button id="genPicksBtn" onclick="fetchTopRecs()" ${TOP_RECS?.loading?'disabled':''} style="background:${!ANTHROPIC_KEY?'#f1f5f9':'linear-gradient(135deg,#1d4ed8,#4f46e5)'};border:none;color:${!ANTHROPIC_KEY?'#94a3b8':'#fff'};padding:6px 13px;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">${TOP_RECS?.loading?'⏳ Scanning…':(TOP_RECS&&hasAny)?'↻ Refresh':'🤖 Generate Picks'}</button></div>
+    </div>
+    ${!TOP_RECS||!hasAny?`<div style="text-align:center;padding:24px 0;color:#94a3b8"><div style="font-size:28px;margin-bottom:8px">📊</div><div style="font-size:12px;font-weight:600">${hasKey?'Click "Generate Picks" to scan all tickers':'Add your Anthropic API key to enable AI recommendations'}</div><div style="font-size:11px;margin-top:4px;color:#cbd5e1">Value-aware · CSP for cheap stocks · LEAPS for beaten-down names</div></div>`:`
+      ${strategyRow('BUY CALL','📈',s.buy_call,'#f0fdf4','#16a34a','#15803d','#dcfce7')}
+      ${strategyRow('SELL CALL','📤',s.sell_call,'#fff7ed','#ea580c','#c2410c','#ffedd5')}
+      ${strategyRow('BUY PUT','📉',s.buy_put,'#fef2f2','#ef4444','#b91c1c','#fee2e2')}
+      ${strategyRow('SELL PUT','💰',s.sell_put,'#fefce8','#ca8a04','#854d0e','#fef9c3')}
+      <div style="font-size:9px;color:#94a3b8;text-align:right;margin-top:6px">🤖 Claude · Value-weighted · Web search · Not financial advice</div>
+    `}
+  </div>`;
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+function chatHTML(){
+  const hasKey=!!ANTHROPIC_KEY,msgs=CHAT_MESSAGES;
+  const messagesHTML=msgs.length===0?`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:120px;color:#94a3b8;gap:8px"><span style="font-size:28px">💬</span><div style="font-size:12px;font-weight:500">Ask anything about your watchlist</div><div style="font-size:11px;color:#cbd5e1">e.g. "Which cheap stocks should I sell puts on?"</div></div>`:msgs.map(m=>{const isUser=m.role==='user';return`<div style="display:flex;flex-direction:${isUser?'row-reverse':'row'};align-items:flex-end;gap:8px;margin-bottom:12px"><div style="width:28px;height:28px;border-radius:50%;background:${isUser?'#1d4ed8':'linear-gradient(135deg,#6d28d9,#4f46e5)'};display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0">${isUser?'👤':'🤖'}</div><div style="max-width:80%;background:${isUser?'#1d4ed8':'#f8fafc'};color:${isUser?'#fff':'#1e293b'};padding:10px 13px;border-radius:${isUser?'12px 12px 2px 12px':'12px 12px 12px 2px'};font-size:12px;line-height:1.65;border:${isUser?'none':'1px solid #e2e8f0'}">${m.text.replace(/\n/g,'<br>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')}<div style="font-size:9px;opacity:.5;margin-top:4px;text-align:${isUser?'right':'left'}">${m.ts}</div></div></div>`;}).join('')+(CHAT_LOADING?`<div style="display:flex;align-items:flex-end;gap:8px;margin-bottom:12px"><div style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#6d28d9,#4f46e5);display:flex;align-items:center;justify-content:center;font-size:13px">🤖</div><div style="background:#f8fafc;border:1px solid #e2e8f0;padding:12px 14px;border-radius:12px 12px 12px 2px;display:flex;gap:4px;align-items:center"><div style="width:6px;height:6px;border-radius:50%;background:#94a3b8;animation:pulse .8s ease-in-out 0s infinite"></div><div style="width:6px;height:6px;border-radius:50%;background:#94a3b8;animation:pulse .8s ease-in-out .2s infinite"></div><div style="width:6px;height:6px;border-radius:50%;background:#94a3b8;animation:pulse .8s ease-in-out .4s infinite"></div></div></div>`:'');
+  const suggested=['Which cheap stocks should I sell puts on?','Best LEAPS for beaten-down stocks?','Is NVDA overbought or overvalued?','Compare HOOD vs OKLO valuation','Which stocks to avoid covered calls on?'];
+  return`<div style="background:#fff;border:1.5px solid #e9d5ff;border-radius:14px;margin-bottom:20px;box-shadow:0 2px 8px rgba(109,40,217,.07);overflow:hidden">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:linear-gradient(135deg,#6d28d9,#4f46e5);cursor:pointer" onclick="toggleChat()">
+      <div style="display:flex;align-items:center;gap:10px"><span style="font-size:18px">💬</span><div><div style="font-size:14px;font-weight:800;color:#fff">Market Chat</div><div style="font-size:10px;color:#c4b5fd;margin-top:1px">Ask Claude about valuation, signals, or trade ideas</div></div>${msgs.length>0?`<span style="background:rgba(255,255,255,.2);color:#fff;font-size:9px;font-weight:700;padding:2px 7px;border-radius:10px">${msgs.length} messages</span>`:''}</div>
+      <div style="display:flex;align-items:center;gap:8px">${msgs.length>0?`<button onclick="event.stopPropagation();clearChat()" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:#fff;padding:3px 9px;border-radius:5px;font-size:10px;cursor:pointer">Clear</button>`:''}<span style="color:#c4b5fd;font-size:14px;font-weight:700">${chatCollapsed?'▼':'▲'}</span></div>
+    </div>
+    ${chatCollapsed?'':`
+    <div id="chat-messages" style="height:320px;overflow-y:auto;padding:16px 18px;scroll-behavior:smooth;background:#fafbff">${messagesHTML}</div>
+    ${msgs.length===0?`<div style="padding:0 18px 12px;display:flex;gap:6px;flex-wrap:wrap">${suggested.map(q=>`<button onclick="sendSuggestion(${JSON.stringify(q)})" style="background:#f5f3ff;border:1px solid #e9d5ff;color:#6d28d9;padding:5px 10px;border-radius:16px;font-size:10px;font-weight:600;cursor:pointer;white-space:nowrap">${q}</button>`).join('')}</div>`:''}
+    <div style="padding:12px 18px 14px;border-top:1px solid #f1f5f9;display:flex;gap:8px;align-items:flex-end;background:#fff">
+      ${!hasKey?`<div style="flex:1;background:#faf5ff;border:1.5px solid #e9d5ff;border-radius:10px;padding:10px 13px;font-size:11px;color:#6d28d9;font-weight:500">Add your Anthropic API key above to start chatting</div>`:`
+      <textarea id="chat-input" placeholder="Ask about valuations, signals, options ideas…" rows="1" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}" oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px'" style="flex:1;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:9px 12px;color:#0f172a;font-size:12px;font-family:inherit;resize:none;line-height:1.5;max-height:100px;overflow-y:auto"></textarea>
+      <button onclick="sendChat()" ${CHAT_LOADING?'disabled':''} style="background:${CHAT_LOADING?'#e2e8f0':'linear-gradient(135deg,#6d28d9,#4f46e5)'};border:none;color:${CHAT_LOADING?'#94a3b8':'#fff'};width:38px;height:38px;border-radius:10px;font-size:16px;cursor:${CHAT_LOADING?'not-allowed':'pointer'};display:flex;align-items:center;justify-content:center;flex-shrink:0">${CHAT_LOADING?'<div class="spinner" style="border-top-color:#94a3b8;width:14px;height:14px"></div>':'➤'}</button>`}
+    </div>`}
+  </div>`;
+}
+
+async function sendChat(){
+  const input=document.getElementById('chat-input'),text=input?.value.trim();
+  if(!text||CHAT_LOADING||!ANTHROPIC_KEY)return;
+  const ts=new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+  CHAT_MESSAGES.push({role:'user',text,ts});
+  if(input){input.value='';input.style.height='auto';}
+  CHAT_LOADING=true;render();scrollChatToBottom();
+  const ctx=TICKERS.filter(t=>t.data?.price).map(t=>{const d=t.data,valStr=t.valVerdict!=='unknown'?` | ${t.valVerdict.toUpperCase()}${t.pe?' PE:'+t.pe:''}${t.forwardPe?' FwdPE:'+t.forwardPe:''}`:' ';return`${t.symbol}: $${d.price?.toFixed(2)} ${d.changePct>=0?'+':''}${d.changePct?.toFixed(2)}% | RSI ${d.rsi??'N/A'} | ${d.tag} (${d.score}/5)${valStr}`;}).join('\n');
+  const history=CHAT_MESSAGES.slice(-10).map(m=>({role:m.role==='user'?'user':'assistant',content:m.text}));
+  try{
+    const res=await fetch(ANTHROPIC,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,system:`You are an expert stock and options trading analyst. Value-first: CSP=best on cheap stocks, LEAPS=beaten-down cheap, CC=only when rich. Use **bold** for key points. Under 200 words.\n\nWatchlist:\n${ctx}\n\nToday: ${new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}.`,messages:history,tools:[{type:'web_search_20250305',name:'web_search'}]})});
+    if(!res.ok)throw new Error(`API ${res.status}`);
+    const d=await res.json();if(d.error)throw new Error(d.error.message);
+    const replyText=(d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
+    CHAT_MESSAGES.push({role:'assistant',text:replyText||'Sorry, could not generate a response.',ts:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})});
+  }catch(e){CHAT_MESSAGES.push({role:'assistant',text:`⚠ Error: ${e.message}`,ts:new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})});}
+  CHAT_LOADING=false;render();scrollChatToBottom();
+}
+function sendSuggestion(q){const input=document.getElementById('chat-input');if(input)input.value=q;sendChat();}
+function clearChat(){CHAT_MESSAGES=[];render();}
+function toggleChat(){chatCollapsed=!chatCollapsed;render();}
+function scrollChatToBottom(){setTimeout(()=>{const el=document.getElementById('chat-messages');if(el)el.scrollTop=el.scrollHeight;},50);}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function render(){
+  const connected=!!KEY_ID,isLive=streamingSymbols.length>0,mktOpen=isMarketOpen();
+  const allCounts={};TICKERS.filter(t=>t.data?.tag).forEach(t=>{allCounts[t.data.tag]=(allCounts[t.data.tag]||0)+1;});
+  document.getElementById('app').innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:21px;font-weight:800;color:#0f172a;letter-spacing:-.3px">Signal Dashboard <span style="font-size:12px;font-weight:600;color:#6d28d9;background:#f5f3ff;padding:2px 8px;border-radius:6px;vertical-align:middle">V2.2</span></div>
+        <div style="font-size:11px;color:#64748b;margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span id="lastUpd">🕐 Jun 18 2026 (cached)</span>
+          ${connected?`<span style="color:${mktOpen?'#16a34a':'#64748b'}">· ${mktOpen?'<span class="live-dot" style="margin-right:2px"></span> Market open':'◯ Market closed'}</span>`:''}
+          ${isLive?'<span style="color:#16a34a">· <span class="live-dot"></span> Live</span>':''}
+          <span style="color:#94a3b8">· ${TICKERS.length} tickers · ${CLEAN.length} sectors</span>
+          <span style="color:#0369a1;font-weight:600">· 📐 Value-aware options</span>
+        </div>
+      </div>
+      ${connected?`<div style="display:flex;gap:7px"><button onclick="toggleAuto()" style="background:${autoInterval?'#dcfce7':'#f1f5f9'};border:1.5px solid ${autoInterval?'#16a34a':'#e2e8f0'};color:${autoInterval?'#15803d':'#475569'};padding:6px 11px;border-radius:7px;font-size:11px;font-weight:600">↻ Auto ${autoInterval?'ON':'OFF'}</button><button onclick="reloadAll()" style="background:#f1f5f9;border:1.5px solid #e2e8f0;color:#475569;padding:6px 11px;border-radius:7px;font-size:11px;font-weight:600">↻ Refresh All</button></div>`:''}
+    </div>
+
+    <!-- Alpaca Panel -->
+    <div style="background:#fff;border:1.5px solid ${connected?'#86efac':'#bfdbfe'};border-radius:12px;margin-bottom:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)">
+      <button onclick="toggleKeyPanel()" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:11px 15px;background:none;border:none;text-align:left">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-size:14px">📈</span><span style="font-size:12px;font-weight:700;color:${connected?'#15803d':'#1d4ed8'}">${connected?`Alpaca connected${isLive?' — '+streamingSymbols.length+' tickers live':''}`:' Connect Alpaca — live prices & streaming'}</span></div>
+        <span style="color:#94a3b8">${keyPanelOpen?'▲':'▼'}</span>
+      </button>
+      <div style="display:${keyPanelOpen?'block':'none'};padding:0 15px 14px">
+        ${!connected?`
+          <div style="font-size:11px;color:#64748b;margin-bottom:10px;line-height:1.7;background:#f0f9ff;border-radius:7px;padding:8px 11px;border:1px solid #bae6fd">Free at <b>alpaca.markets</b> → Paper Trading → API Keys</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+            <div><div style="font-size:10px;color:#475569;font-weight:600;margin-bottom:4px">API KEY ID</div><input id="keyIdIn" placeholder="PKXXXXXXXXXXXXXXXX" style="width:100%;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:6px;padding:7px 9px;color:#0f172a;font-size:11px;font-family:monospace"/></div>
+            <div><div style="font-size:10px;color:#475569;font-weight:600;margin-bottom:4px">SECRET KEY</div><input id="secretIn" type="password" placeholder="••••••••••••••" style="width:100%;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:6px;padding:7px 9px;color:#0f172a;font-size:11px;font-family:monospace"/></div>
+          </div>
+          <button onclick="connect()" id="connectBtn" style="background:#1d4ed8;border:none;color:#fff;padding:8px 20px;border-radius:7px;font-size:12px;font-weight:700">Connect to Alpaca</button>
+          <div id="connErr" style="display:none;color:#dc2626;font-size:11px;margin-top:8px;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:7px 10px"></div>
+        `:`
+          <div style="display:flex;align-items:center;justify-content:space-between;background:#f0fdf4;border-radius:7px;padding:8px 11px;border:1px solid #bbf7d0">
+            <div><div style="font-size:11px;color:#15803d;font-weight:600">Key: ${KEY_ID.slice(0,6)}•••••• · IEX feed</div>${isLive?`<div style="font-size:10px;color:#16a34a;margin-top:2px">⬤ Streaming ${streamingSymbols.length} / ${TICKERS.length} tickers</div>`:""}</div>
+            <button onclick="disconnect()" style="background:#fff;border:1.5px solid #86efac;color:#15803d;padding:4px 10px;border-radius:5px;font-size:11px;font-weight:600">Disconnect</button>
+          </div>
+        `}
+      </div>
+    </div>
+
+    <!-- Anthropic Panel — FIX: input does not get destroyed by WS ticks -->
+    <div style="background:#fff;border:1.5px solid ${ANTHROPIC_KEY?"#c4b5fd":"#e9d5ff"};border-radius:12px;margin-bottom:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04)">
+      <button onclick="toggleAnthropicPanel()" style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:11px 15px;background:none;border:none;text-align:left">
+        <div style="display:flex;align-items:center;gap:8px"><span style="font-size:14px">🤖</span><span style="font-size:12px;font-weight:700;color:${ANTHROPIC_KEY?"#6d28d9":"#7c3aed"}">${ANTHROPIC_KEY?"Claude AI connected — value-aware analysis active":"Connect Anthropic — AI value + options analysis (optional)"}</span></div>
+        <span style="color:#94a3b8">${aiPanelOpen?"▲":"▼"}</span>
+      </button>
+      <div style="display:${aiPanelOpen?"block":"none"};padding:0 15px 14px">
+        ${!ANTHROPIC_KEY?`
+          <div style="font-size:11px;color:#64748b;margin-bottom:10px;line-height:1.7;background:#faf5ff;border-radius:7px;padding:8px 11px;border:1px solid #e9d5ff">
+            Get key at <b>console.anthropic.com</b> → API Keys. V2.2 fetches P/E + Fwd P/E + rates each strategy by valuation.
+          </div>
+          <div style="margin-bottom:10px">
+            <div style="font-size:10px;color:#475569;font-weight:600;margin-bottom:4px">ANTHROPIC API KEY</div>
+            <input id="anthropicKeyIn" type="password" placeholder="sk-ant-api03-…" autocomplete="off"
+              style="width:100%;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:6px;padding:7px 9px;color:#0f172a;font-size:11px;font-family:monospace"
+              onkeydown="if(event.key===\'Enter\')saveAnthropicKey()"/>
+          </div>
+          <button id="saveKeyBtn" onclick="saveAnthropicKey()" style="background:#7c3aed;border:none;color:#fff;padding:8px 20px;border-radius:7px;font-size:12px;font-weight:700;transition:all .2s">Save Key</button>
+          <div id="aiKeyErr" style="display:none;color:#dc2626;font-size:11px;margin-top:8px;background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:7px 10px"></div>
+        `:`
+          <div style="display:flex;align-items:center;justify-content:space-between;background:#faf5ff;border-radius:7px;padding:8px 11px;border:1px solid #e9d5ff">
+            <div><div style="font-size:11px;color:#6d28d9;font-weight:600">Key: ${ANTHROPIC_KEY.slice(0,10)}•••••• · claude-sonnet-4-6</div><div style="font-size:10px;color:#7c3aed;margin-top:2px">V2.2: P/E + Fwd P/E + valuation-rated strategies</div></div>
+            <button onclick="clearAnthropicKey()" style="background:#fff;border:1.5px solid #c4b5fd;color:#6d28d9;padding:4px 10px;border-radius:5px;font-size:11px;font-weight:600">Remove</button>
+          </div>
+        `}
+      </div>
+    </div>
+
+    <div class="page-section" id="page-picks">${topRecsHTML()}</div>
+    <div class="page-section" id="page-chat">${chatHTML()}</div>
+    <div class="page-section" id="page-watchlist">
+      ${Object.keys(allCounts).length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;padding:8px 12px;background:#fff;border:1.5px solid #e2e8f0;border-radius:9px;align-items:center"><span style="font-size:10px;color:#94a3b8;font-weight:700;margin-right:3px">ALL SIGNALS</span>${Object.entries(SIG).map(([k,c])=>allCounts[k]?`<span style="font-size:10px;color:${c.text};background:${c.bg};border:1.5px solid ${c.border};padding:2px 8px;border-radius:10px;font-family:monospace;font-weight:700">${allCounts[k]} ${c.label}</span>`:"").join("")}</div>`:""}
+      ${CLEAN.map(sec=>sectorHTML(sec)).join("")}
+      <div style="margin-top:16px;font-size:10px;color:#94a3b8;text-align:center">Alpaca IEX · Claude V2.2 · Value-aware options · Not financial advice</div>
+    </div>
+
+    <nav id="mobile-nav">
+      <button class="nav-btn active" id="nav-picks" onclick="switchTab("picks")"><span class="nav-icon">🎯</span>PICKS</button>
+      <button class="nav-btn" id="nav-chat" onclick="switchTab("chat")"><span class="nav-icon">💬</span>CHAT</button>
+      <button class="nav-btn" id="nav-watchlist" onclick="switchTab("watchlist")"><span class="nav-icon">📊</span>WATCHLIST</button>
+      <button class="nav-btn" id="nav-settings" onclick="switchTab("settings")"><span class="nav-icon">⚙️</span>SETTINGS</button>
+    </nav>
+  `;
+  setTimeout(afterRender,30);
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+let activeTab="picks";
+function switchTab(tab){activeTab=tab;["picks","chat","watchlist","settings"].forEach(t=>{const sec=document.getElementById("page-"+t),btn=document.getElementById("nav-"+t);if(sec)sec.style.display=t===tab?"block":"none";if(btn)btn.classList.toggle("active",t===tab);});window.scrollTo({top:0,behavior:"smooth"});}
+function initMobileNav(){if(window.innerWidth>640)return;switchTab(activeTab);}
+function toggleKeyPanel(){keyPanelOpen=!keyPanelOpen;render();}
+let activeAISym=null;
+function toggleAIPanel(sym){activeAISym=activeAISym===sym?null:sym;render();}
+function saveAnthropicKey(){
+  const k=document.getElementById("anthropicKeyIn")?.value.trim();
+  if(!k){const el=document.getElementById("aiKeyErr");if(el){el.textContent="⚠ Please paste your Anthropic API key.";el.style.display="block";}return;}
+  const btn=document.getElementById("saveKeyBtn");
+  if(btn){btn.textContent="✓ Saving…";btn.disabled=true;btn.style.background="#5b21b6";}
+  setTimeout(()=>{ANTHROPIC_KEY=k;aiPanelOpen=false;TOP_RECS=null;render();},350);
+}
+function clearAnthropicKey(){ANTHROPIC_KEY="";aiPanelOpen=true;render();}
+async function connect(){
+  const kid=document.getElementById("keyIdIn")?.value.trim(),sec=document.getElementById("secretIn")?.value.trim();
+  if(!kid||!sec){showConnErr("Alpaca Key ID and Secret are required.");return;}
+  const btn=document.getElementById("connectBtn");if(btn){btn.textContent="Connecting…";btn.disabled=true;}
+  try{KEY_ID=kid;SECRET=sec;await fetchSnap("NVDA");keyPanelOpen=false;await reloadAll();startStream(TICKERS.map(t=>t.symbol));}
+  catch(e){KEY_ID="";SECRET="";showConnErr(e.message.includes("403")||e.message.includes("Invalid")?"Invalid credentials.":e.message);if(btn){btn.textContent="Connect to Alpaca";btn.disabled=false;}}
+}
+function showConnErr(m){const el=document.getElementById("connErr");if(el){el.textContent="⚠ "+m;el.style.display="block";}}
+function disconnect(){stopStream();KEY_ID="";SECRET="";clearInterval(autoInterval);autoInterval=null;keyPanelOpen=true;render();}
+function updateTs(){const el=document.getElementById("lastUpd");if(el)el.textContent=`🕐 ${new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit",timeZone:"America/New_York"})} ET`;}
+function afterRender(){initMobileNav();scrollChatToBottom();}
+async function reloadOne(sym){const t=TICKERS.find(x=>x.symbol===sym);if(!t)return;t.loading=true;t.error=null;render();try{t.data=await loadTicker(sym);}catch(e){t.error=e.message;}t.loading=false;updateTs();render();}
+async function reloadAll(){await Promise.all(TICKERS.map(async t=>{t.loading=true;t.error=null;try{t.data=await loadTicker(t.symbol);}catch(e){t.error=e.message;}t.loading=false;}));updateTs();render();if(ANTHROPIC_KEY)fetchTopRecs();}
+function toggleAuto(){if(autoInterval){clearInterval(autoInterval);autoInterval=null;}else{autoInterval=setInterval(()=>{if(isMarketOpen())reloadAll();},60*60*1000);}render();}
+function removeTicker(sym){TICKERS=TICKERS.filter(t=>t.symbol!==sym);if(ws&&ws.readyState===1)ws.send(JSON.stringify({action:"unsubscribe",trades:[sym]}));streamingSymbols=streamingSymbols.filter(s=>s!==sym);render();}
+render();
+</script>
+
+<!-- PWA -->
+<div id="pwa-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#1d4ed8;color:#fff;padding:12px 16px;z-index:9999;align-items:center;justify-content:space-between;gap:12px;box-shadow:0 -2px 12px rgba(0,0,0,.15)">
+  <div style="display:flex;align-items:center;gap:10px"><span style="font-size:22px">📈</span><div><div style="font-size:13px;font-weight:700">Install Signal Dashboard V2.2</div><div style="font-size:11px;opacity:.85">Add to home screen for quick access</div></div></div>
+  <div style="display:flex;gap:8px;flex-shrink:0"><button id="pwa-dismiss" style="background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.3);color:#fff;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer">Not now</button><button id="pwa-install" style="background:#fff;border:none;color:#1d4ed8;padding:6px 14px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Install</button></div>
+</div>
+<script>
+if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{});}
+let deferredPrompt=null;
+const banner=document.getElementById("pwa-banner"),installBtn=document.getElementById("pwa-install"),dismissBtn=document.getElementById("pwa-dismiss");
+window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredPrompt=e;if(banner)banner.style.display="flex";});
+if(installBtn)installBtn.addEventListener("click",async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();const{outcome}=await deferredPrompt.userChoice;if(outcome==="accepted")banner.style.display="none";deferredPrompt=null;});
+if(dismissBtn)dismissBtn.addEventListener("click",()=>{if(banner)banner.style.display="none";});
+window.addEventListener("appinstalled",()=>{if(banner)banner.style.display="none";deferredPrompt=null;});
+</script>
+</body>
+</html>
