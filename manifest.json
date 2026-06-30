@@ -2,7 +2,7 @@
   "name": "Signal Dashboard",
   "short_name": "Signals",
   "description": "Real-time stock signal dashboard with AI options analysis",
-  "start_url": "./signal-dashboard-v2.1.html",
+  "start_url": "./signal-dashboard-v2.2.html",
   "display": "standalone",
   "orientation": "any",
   "background_color": "#f0f2f5",
