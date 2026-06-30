@@ -204,92 +204,109 @@ async function loadTicker(sym){
   return{...snap,change,changePct,closes:closes.slice(-30),...sig};
 }
 
+// ── Shared bulletproof JSON repair (handles truncation from token limits) ─────
+function repairAndParseJSON(str){
+  const start=str.indexOf('{');
+  if(start===-1) throw new Error('No JSON object found in AI response');
+  // Walk the string tracking brace/bracket/string depth so we know exactly
+  // how far a *complete* object goes, and how much is left dangling if truncated.
+  let depth=0,inStr=false,esc=false,end=-1;
+  for(let i=start;i<str.length;i++){
+    const ch=str[i];
+    if(esc){esc=false;continue;}
+    if(ch==='\\'){esc=true;continue;}
+    if(ch==='"'){inStr=!inStr;continue;}
+    if(inStr)continue;
+    if(ch==='{')depth++;
+    else if(ch==='}'){depth--;if(depth===0){end=i;break;}}
+  }
+  let raw = end!==-1 ? str.slice(start,end+1) : str.slice(start);
+
+  // Escape literal newlines/tabs that occur INSIDE string values only
+  let fixed='',inS=false,es=false;
+  for(let i=0;i<raw.length;i++){
+    const ch=raw[i];
+    if(es){fixed+=ch;es=false;continue;}
+    if(ch==='\\'){fixed+=ch;es=true;continue;}
+    if(ch==='"'){fixed+=ch;inS=!inS;continue;}
+    if(inS){
+      if(ch==='\n'){fixed+='\\n';continue;}
+      if(ch==='\r'){fixed+='\\r';continue;}
+      if(ch==='\t'){fixed+='\\t';continue;}
+    }
+    fixed+=ch;
+  }
+  fixed=fixed.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g,'');
+
+  // Attempt 1: parse as-is (handles the common, complete case)
+  try{ return JSON.parse(fixed); }catch(e){}
+
+  // Attempt 2: response was truncated mid-object (token limit hit).
+  // Trim back to the last fully-closed value, then auto-close all open
+  // braces/brackets so we get a valid (partial) object instead of erroring out.
+  let repaired=fixed;
+  // Drop a trailing dangling key/value or partial string fragment
+  repaired=repaired.replace(/,\s*"[^"]*"\s*:\s*"[^"]*$/,'');      // dangling "key":"partial string
+  repaired=repaired.replace(/,\s*"[^"]*"\s*:\s*\{[^}]*$/,'');      // dangling "key":{partial object
+  repaired=repaired.replace(/,\s*"[^"]*"\s*:?\s*$/,'');            // dangling "key" or "key":
+  repaired=repaired.replace(/,\s*\{[^}]*$/,'');                    // dangling array element {partial
+  repaired=repaired.replace(/,\s*$/,'');                           // trailing comma
+
+  const openCurly=(repaired.match(/\{/g)||[]).length-(repaired.match(/\}/g)||[]).length;
+  const openSquare=(repaired.match(/\[/g)||[]).length-(repaired.match(/\]/g)||[]).length;
+  for(let i=0;i<openSquare;i++) repaired+=']';
+  for(let i=0;i<openCurly;i++) repaired+='}';
+
+  try{ return JSON.parse(repaired); }
+  catch(e2){ throw new Error('AI response was incomplete and could not be repaired ('+e2.message+'). Try again — the model may need fewer tokens for this ticker.'); }
+}
+
 // ── AI ────────────────────────────────────────────────────────────────────────
 async function fetchAI(sym,data){
   if(!ANTHROPIC_KEY)throw new Error('Add Anthropic API key to enable AI analysis');
-  const systemPrompt=`You are a senior options trading analyst who combines technical analysis, fundamental valuation, and market news to give actionable options recommendations.
-
-VALUATION-DRIVEN OPTIONS STRATEGY (V2.2):
-Look up P/E, Forward P/E, and industry average P/E via web search, then apply this logic:
+  const todayStr=new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  const systemPrompt=`You are a senior options trading analyst combining technical analysis, valuation, and market news into actionable options recommendations.
 
 VALUATION VERDICTS:
-- CHEAP: Forward P/E significantly below industry avg, OR stock down 20%+ from 52wk high with strong fundamentals
-- FAIR: Within 15% of industry average P/E
+- CHEAP: Forward P/E well below industry avg, or stock down 20%+ from 52wk high with strong fundamentals
+- FAIR: within 15% of industry average P/E
 - RICH: Forward P/E well above industry avg, priced for perfection
 
-OPTIONS RATING BASED ON VALUATION:
-- SELL PUT (CSP): Rate HIGH when CHEAP (you WANT to own it at an even cheaper cost basis via assignment). Rate LOW when RICH.
-- SELL CALL (Covered): Rate HIGH when RICH+overbought. Rate LOW/AVOID when CHEAP (do NOT cap upside on beaten-down stock).
-- BUY CALL LEAPS: Rate HIGH when CHEAP+beaten-down+strong fundamentals. Rate LOW when RICH.
-- BUY PUT: Rate HIGH when RICH+RSI>65. Rate LOW when CHEAP.
+OPTIONS RATING BY VALUATION:
+- SELL PUT (CSP): HIGH when CHEAP (want assignment at lower cost basis). LOW when RICH.
+- SELL CALL (Covered): HIGH when RICH+overbought. LOW/AVOID when CHEAP (protect upside).
+- BUY CALL LEAPS: HIGH when CHEAP+beaten-down+strong fundamentals. LOW when RICH.
+- BUY PUT: HIGH when RICH+RSI>65. LOW when CHEAP.
 
-STRICT EXPIRY RULES — compute these dynamically from TODAY_DATE, do NOT copy the example dates literally:
-- BUY CALL (LEAPS): minimum 1 year from today. Example format only: "Jun 2027"
-- SELL PUT: pick a Friday 1-2 weeks from today. Example format only: "Jul 10 2026"
-- SELL CALL: pick a Friday 1-2 weeks from today. Example format only: "Jul 10 2026"
-- BUY PUT: pick a Friday 2-4 weeks from today. Example format only: "Jul 24 2026"
-TODAY_DATE is ${new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}. Calculate all expiry dates relative to this real date — the example dates above are just formatting templates, not the actual dates to use.
+EXPIRY RULES (compute from TODAY_DATE below, never copy any example literally):
+- BUY CALL LEAPS: 1yr+ out, format "Mon YYYY"
+- SELL PUT / SELL CALL: a Friday 1-2 weeks out, format "Mon DD YYYY"
+- BUY PUT: a Friday 2-4 weeks out, format "Mon DD YYYY"
+TODAY_DATE: ${todayStr}
 
-Return ONLY a single raw JSON object. No markdown. No backticks. All strings on ONE LINE under 130 chars. Plain ASCII only.`;
+OUTPUT FORMAT — CRITICAL:
+Return ONLY one raw JSON object. No markdown, no backticks, no commentary before or after.
+Keep every string SHORT: summary and val_context max 1 sentence each, all other text fields max 12 words.
+This brevity is required so the full object fits in the response — do not skip fields, just keep them terse.`;
 
-  const userPrompt=`Analyze ${sym} for value-aware options trading. Search for P/E, Forward P/E, industry avg P/E, 52wk high, recent news.
+  const userPrompt=`Analyze ${sym} for value-aware options trading.
+TECHNICALS: Price $${data.price?.toFixed(2)} | Chg ${data.changePct?.toFixed(2)}% | RSI ${data.rsi??'N/A'} | MACD ${data.macd??'N/A'}/${data.macdSig??'N/A'} | SMA20 ${data.sma20?'$'+data.sma20:'N/A'} | SMA50 ${data.sma50?'$'+data.sma50:'N/A'} | Signal ${data.tag} (${data.score}/5)
 
-TECHNICALS: Price $${data.price?.toFixed(2)} | Change ${data.changePct?.toFixed(2)}% | RSI ${data.rsi??'N/A'} | MACD ${data.macd??'N/A'}/${data.macdSig??'N/A'} | SMA20 ${data.sma20?'$'+data.sma20:'N/A'} | SMA50 ${data.sma50?'$'+data.sma50:'N/A'} | Signal ${data.tag} (${data.score}/5)
+Search for: P/E, forward P/E, industry avg P/E, 52wk high, and one recent news item for ${sym}.
 
-Search: "${sym} P/E ratio forward PE industry average 2026" and "${sym} stock news June 2026"
-
-Return this exact JSON (all strings single line, under 130 chars, ASCII only):
-{"verdict":"BUY","summary":"2-3 sentence assessment.","pe":28.5,"forward_pe":22.1,"industry_pe":30.0,"val_verdict":"cheap","val_context":"2 sentence valuation vs peers and options strategy implication.","news_catalyst":"Latest news one line.","market_trend":"1 sentence sector trend.","buy_call":{"strike":"$XXX","expiry":"<calc: ~1yr+ from today, format Mon YYYY>","delta":"~0.55","rating":"HIGH","rationale":"One line LEAPS rationale."},"sell_put":{"strike":"$XXX","expiry":"<calc: Friday 1-2wks from today, format Mon DD YYYY>","premium_est":"~$1.50","rating":"HIGH","rationale":"One line CSP rationale."},"sell_call":{"strike":"$XXX","expiry":"<calc: Friday 1-2wks from today, format Mon DD YYYY>","premium_est":"~$1.20","rating":"LOW","rationale":"One line CC rationale."},"buy_put":{"strike":"$XXX","expiry":"<calc: Friday 2-4wks from today, format Mon DD YYYY>","rating":"LOW","rationale":"One line hedge rationale."},"key_risk":"Single biggest risk one line.","support":"$XXX","resistance":"$XXX"}`;
+Return ONLY this JSON shape, all values terse:
+{"verdict":"BUY","summary":"<=1 sentence","pe":28.5,"forward_pe":22.1,"industry_pe":30.0,"val_verdict":"cheap","val_context":"<=1 sentence","news_catalyst":"<=12 words","market_trend":"<=10 words","buy_call":{"strike":"$XXX","expiry":"computed date","delta":"~0.55","rating":"HIGH","rationale":"<=12 words"},"sell_put":{"strike":"$XXX","expiry":"computed date","premium_est":"~$1.50","rating":"HIGH","rationale":"<=12 words"},"sell_call":{"strike":"$XXX","expiry":"computed date","premium_est":"~$1.20","rating":"LOW","rationale":"<=12 words"},"buy_put":{"strike":"$XXX","expiry":"computed date","rating":"LOW","rationale":"<=12 words"},"key_risk":"<=12 words","support":"$XXX","resistance":"$XXX"}`;
 
   const res=await fetch(ANTHROPIC,{
     method:'POST',
     headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1400,system:systemPrompt,messages:[{role:'user',content:userPrompt}],tools:[{type:'web_search_20250305',name:'web_search'}]})
+    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:2200,system:systemPrompt,messages:[{role:'user',content:userPrompt}],tools:[{type:'web_search_20250305',name:'web_search'}]})
   });
   if(!res.ok)throw new Error(`AI ${res.status}`);
   const d=await res.json();
   if(d.error)throw new Error(d.error.message);
   const text=(d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
-  // ── Bulletproof JSON extractor ──────────────────────────────────────────────
-  // Finds the FIRST complete {...} block, ignores anything before or after it.
-  function extractJSON(str){
-    const start=str.indexOf('{');
-    if(start===-1) throw new Error('No JSON found in AI response');
-    let depth=0,inStr=false,esc=false,end=-1;
-    for(let i=start;i<str.length;i++){
-      const ch=str[i];
-      if(esc){esc=false;continue;}
-      if(ch==='\\'){esc=true;continue;}
-      if(ch==='"'){inStr=!inStr;continue;}
-      if(inStr)continue;
-      if(ch==='{')depth++;
-      else if(ch==='}'){depth--;if(depth===0){end=i;break;}}
-    }
-    if(end===-1) throw new Error('Incomplete JSON object in AI response');
-    let raw=str.slice(start,end+1);
-    // Fix literal newlines/tabs inside string values only
-    let fixed='',inS=false,es=false;
-    for(let i=0;i<raw.length;i++){
-      const ch=raw[i];
-      if(es){fixed+=ch;es=false;continue;}
-      if(ch==='\\'){fixed+=ch;es=true;continue;}
-      if(ch==='"'){fixed+=ch;inS=!inS;continue;}
-      if(inS){
-        if(ch==='\n'){fixed+='\\n';continue;}
-        if(ch==='\r'){fixed+='\\r';continue;}
-        if(ch==='\t'){fixed+='\\t';continue;}
-      }
-      fixed+=ch;
-    }
-    try{return JSON.parse(fixed);}
-    catch(e){
-      // Last resort: strip all ASCII control chars and retry
-      const clean=fixed.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g,'');
-      try{return JSON.parse(clean);}
-      catch(e2){throw new Error('JSON parse failed: '+e2.message+' — raw: '+fixed.slice(0,120));}
-    }
-  }
-  return extractJSON(text);
+  return repairAndParseJSON(text);
 }
 
 async function getAI(sym){
@@ -578,30 +595,15 @@ async function fetchTopRecs(){
   const systemPrompt=`You are a professional options trader using a VALUE-FIRST approach. Return ALL stocks qualifying with 80%+ confidence.
 STRATEGY: CSP=HIGH when CHEAP. CC=HIGH when RICH+overbought, AVOID when CHEAP. LEAPS=HIGH when CHEAP+beaten-down. BuyPut=HIGH when RICH+overbought.
 EXPIRY — compute from TODAY_DATE, do not copy example dates: BUY CALL 1yr+ from today | SELL CALL/PUT pick a Friday 1-2wks from today | BUY PUT pick a Friday 2-4wks from today. TODAY_DATE is ${new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}.
-Each pick: {"symbol":"X","strike":"$X","expiry":"X","confidence":85,"thesis":"one line","catalyst":"one line","risk":"one line","val_note":"one line"}
-ASCII only, single line strings, raw JSON only.`;
-  const userPrompt=`Watchlist:\n${snapshot}\n\nSearch "tech stock valuation options June 2026" then return ONLY:\n{"market_context":"1 sentence.","generated_at":"TIME","buy_call":[...],"sell_call":[...],"buy_put":[...],"sell_put":[...]}`;
+Each pick: {"symbol":"X","strike":"$X","expiry":"X","confidence":85,"thesis":"<=10 words","catalyst":"<=10 words","risk":"<=10 words","val_note":"<=8 words"}
+Keep ALL text fields terse so the full response fits. Return at most 3 picks per strategy, best ones only. ASCII only, single line strings, raw JSON only, no markdown.`;
+  const userPrompt=`Watchlist:\n${snapshot}\n\nSearch "tech stock valuation options" then return ONLY:\n{"market_context":"<=1 sentence","generated_at":"TIME","buy_call":[...max 3...],"sell_call":[...max 3...],"buy_put":[...max 3...],"sell_put":[...max 3...]}`;
   try{
-    const res=await fetch(ANTHROPIC,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:3000,system:systemPrompt,messages:[{role:'user',content:userPrompt}],tools:[{type:'web_search_20250305',name:'web_search'}]})});
+    const res=await fetch(ANTHROPIC,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:4000,system:systemPrompt,messages:[{role:'user',content:userPrompt}],tools:[{type:'web_search_20250305',name:'web_search'}]})});
     if(!res.ok)throw new Error(`API ${res.status}`);
     const d=await res.json();if(d.error)throw new Error(d.error.message);
     const text=(d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
-    function extractJ(str){
-      const s=str.indexOf('{');if(s===-1)throw new Error('No JSON');
-      let dep=0,inS=false,es=false,en=-1;
-      for(let i=s;i<str.length;i++){const c=str[i];if(es){es=false;continue;}if(c==='\\'){es=true;continue;}if(c==='"'){inS=!inS;continue;}if(inS)continue;if(c==='{')dep++;else if(c==='}'){dep--;if(dep===0){en=i;break;}}}
-      const chunk=str.slice(s,en===-1?undefined:en+1);
-      let fix='',iS=false,e2=false;
-      for(let i=0;i<chunk.length;i++){const c=chunk[i];if(e2){fix+=c;e2=false;continue;}if(c==='\\'){fix+=c;e2=true;continue;}if(c==='"'){fix+=c;iS=!iS;continue;}if(iS){if(c==='\n'){fix+='\\n';continue;}if(c==='\r'){fix+='\\r';continue;}if(c==='\t'){fix+='\\t';continue;}}fix+=c;}
-      try{return JSON.parse(fix);}catch(e){
-        let r=fix.replace(/,\s*[\[{][^\]\}]*$/,'').replace(/,\s*$/,'');
-        const ob=(r.match(/\[/g)||[]).length-(r.match(/\]/g)||[]).length;
-        const oc=(r.match(/\{/g)||[]).length-(r.match(/\}/g)||[]).length;
-        for(let i=0;i<ob;i++)r+=']';for(let i=0;i<oc;i++)r+='}';
-        return JSON.parse(r.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g,''));
-      }
-    }
-    const parsed=extractJ(text),norm=v=>Array.isArray(v)?v:v&&v.symbol?[v]:[];
+    const parsed=repairAndParseJSON(text),norm=v=>Array.isArray(v)?v:v&&v.symbol?[v]:[];
     TOP_RECS={loading:false,error:null,market_context:parsed.market_context||'',generatedAt:parsed.generated_at||new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',timeZone:'America/New_York'})+' ET',strategies:{buy_call:norm(parsed.buy_call),sell_call:norm(parsed.sell_call),buy_put:norm(parsed.buy_put),sell_put:norm(parsed.sell_put)}};
   }catch(e){TOP_RECS={loading:false,error:e.message,strategies:{},market_context:'',generatedAt:''};}
   render();
@@ -683,7 +685,7 @@ async function sendChat(){
   const ctx=TICKERS.filter(t=>t.data?.price).map(t=>{const d=t.data,valStr=t.valVerdict!=='unknown'?` | ${t.valVerdict.toUpperCase()}${t.pe?' PE:'+t.pe:''}${t.forwardPe?' FwdPE:'+t.forwardPe:''}`:' ';return`${t.symbol}: $${d.price?.toFixed(2)} ${d.changePct>=0?'+':''}${d.changePct?.toFixed(2)}% | RSI ${d.rsi??'N/A'} | ${d.tag} (${d.score}/5)${valStr}`;}).join('\n');
   const history=CHAT_MESSAGES.slice(-10).map(m=>({role:m.role==='user'?'user':'assistant',content:m.text}));
   try{
-    const res=await fetch(ANTHROPIC,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:600,system:`You are an expert stock and options trading analyst. Value-first: CSP=best on cheap stocks, LEAPS=beaten-down cheap, CC=only when rich. Use **bold** for key points. Under 200 words.\n\nWatchlist:\n${ctx}\n\nToday: ${new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}.`,messages:history,tools:[{type:'web_search_20250305',name:'web_search'}]})});
+    const res=await fetch(ANTHROPIC,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system:`You are an expert stock and options trading analyst. Value-first: CSP=best on cheap stocks, LEAPS=beaten-down cheap, CC=only when rich. Use **bold** for key points. Under 200 words.\n\nWatchlist:\n${ctx}\n\nToday: ${new Date().toLocaleDateString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}.`,messages:history,tools:[{type:'web_search_20250305',name:'web_search'}]})});
     if(!res.ok)throw new Error(`API ${res.status}`);
     const d=await res.json();if(d.error)throw new Error(d.error.message);
     const replyText=(d.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('').trim();
